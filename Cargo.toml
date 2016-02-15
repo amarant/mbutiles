@@ -1,0 +1,9 @@
+[package]
+name = "mbutiles"
+version = "0.1.0"
+authors = ["Arnaud Marant <arnaudmarant@gmail.com>"]
+
+[dependencies]
+docopt = "0.6"
+rustc-serialize = "0.3"
+rusqlite = "0.6.0"
