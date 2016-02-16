@@ -84,9 +84,35 @@ fn main() {
     }
 }
 
-fn mbtiles_connect(mbtiles_file: &Path) {
-    let conn = Connection::open(mbtiles_file).unwrap();
-    //conn.execute(,)
+fn mbtiles_connect(mbtiles_file: &Path) -> Connection {
+    Connection::open(mbtiles_file).unwrap()
+}
+
+fn optimize_connection(connection: &Connection) {
+    connection.execute_batch("
+    PRAGMA synchronous=0;
+    PRAGMA locking_mode=EXCLUSIVE;
+    PRAGMA journal_mode=DELETE;
+    ");
+}
+
+fn mbtiles_setup(connection: &Connection) {
+    connection.execute_batch("
+    CREATE TABLE tiles (
+            zoom_level INTEGER,
+            tile_column INTEGER,
+            tile_row INTEGER,
+            tile_data BLOB);
+    CREATE TABLE metadata
+        (name TEXT, value TEXT);
+    CREATE TABLE grids (zoom_level INTEGER, tile_column INTEGER,
+        tile_row INTEGER, grid BLOB);
+    CREATE TABLE grid_data (zoom_level INTEGER, tile_column
+        INTEGER, tile_row INTEGER, key_name TEXT, key_json TEXT);
+    CREATE UNIQUE INDEX name ON metadata (name);
+    CREATE UNIQUE INDEX tile_index ON tiles
+        (zoom_level, tile_column, tile_row);
+    ");
 }
 
 fn import(input: &Path, output: &Path,
@@ -95,7 +121,18 @@ fn import(input: &Path, output: &Path,
     flag_grid_callback: Option<String>) {
     let input_path = Path::new(&input);
     if input_path.is_dir() {
-        mbtiles_connect(output);
+        let connection = mbtiles_connect(output);
+        optimize_connection(&connection);
+        mbtiles_setup(&connection);
+        if let Ok(dir_entries) = input_path.read_dir() {
+            for zoom_entry in dir_entries {
+                if let Ok(zoom_dir) = zoom_entry {
+                    println!("{:?}", zoom_dir.path().as_path());
+                } else {
+                    continue;
+                }
+            }
+        }
     } else {
         panic!("Can only import from a directory")
     }
