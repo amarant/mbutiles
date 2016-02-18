@@ -1,16 +1,24 @@
+#![feature(plugin)]
+#![plugin(clippy)]
+
 extern crate rustc_serialize;
 extern crate docopt;
 extern crate rusqlite;
+extern crate walkdir;
+extern crate regex;
 
 use docopt::Docopt;
-use std::path::Path;
 use rusqlite::Connection;
+use std::iter::Iterator;
+use walkdir::{DirEntry, WalkDir, WalkDirIterator};
+use std::path::{Path, Component};
 
 const USAGE: &'static str = "
 MBTiles utils.
 
 Usage:
-    mbutiles <command> [options] <input> [<output>]
+    mbutiles <command> [options] <input> \
+                             [<output>]
     mbutiles -h | --help
     mbutiles --version
 
@@ -41,7 +49,7 @@ enum Scheme {
     Wms,
 }
 
-#[derive(RustcDecodable, Debug)]
+#[derive(RustcDecodable, Debug, Clone, Copy)]
 enum ImageFormat {
     Png,
     Jpg,
@@ -61,8 +69,8 @@ struct Args {
 
 fn main() {
     let args: Args = Docopt::new(USAGE)
-        .and_then(|d| d.decode())
-        .unwrap_or_else(|e| e.exit());
+                         .and_then(|d| d.decode())
+                         .unwrap_or_else(|e| e.exit());
     println!("{:?}", args);
     match args.arg_command {
         Command::Import => {
@@ -115,33 +123,126 @@ fn mbtiles_setup(connection: &Connection) {
     ");
 }
 
-fn import(input: &Path, output: &Path,
-    flag_scheme: Scheme,
-    flag_image_format: Option<ImageFormat>,
-    flag_grid_callback: Option<String>) {
+fn is_hidden(entry: &DirEntry) -> bool {
+    entry.file_name()
+         .to_str()
+         .map(|s| s.starts_with("."))
+         .unwrap_or(false)
+}
+
+fn get_extension(image_format: ImageFormat) -> String {
+    match image_format {
+        ImageFormat::Jpg => "jpg".to_owned(),
+        ImageFormat::Pbf => "pbf".to_owned(),
+        ImageFormat::Png => "png".to_owned(),
+        ImageFormat::Webp => "webp".to_owned(),
+    }
+}
+
+fn parse_component(component: Component, parse_file: Option<ImageFormat>) -> Option<i32> {
+    if let Component::Normal(zoom_dir) = component {
+        zoom_dir.to_str()
+            .ok_or("no component".to_owned())
+            .and_then(|s| {
+                if let Some(image_format) = parse_file {
+                    let parts: Vec<&str> = s.split('.').collect();
+                    if parts[1] == get_extension(image_format) {
+                        parts[0].parse::<i32>().map_err(|err| err.to_string())
+                    } else {
+                        Err("r".to_owned())
+                    }
+                } else {
+                    s.parse::<i32>().map_err(|err| err.to_string())
+                }
+            })
+            .map_err(|err| println!("{:?}", err))
+            .ok()
+    } else {
+        println!("fail");
+        None
+    }
+}
+
+fn import(input: &Path,
+          output: &Path,
+          flag_scheme: Scheme,
+          flag_image_format: Option<ImageFormat>,
+          flag_grid_callback: Option<String>) {
     let input_path = Path::new(&input);
     if input_path.is_dir() {
         let connection = mbtiles_connect(output);
         optimize_connection(&connection);
         mbtiles_setup(&connection);
-        if let Ok(dir_entries) = input_path.read_dir() {
+        let base_components_length = input_path.components().count();
+        let dir_walker = WalkDir::new(input_path)
+            .follow_links(true)
+            .min_depth(1)
+            .max_depth(3)
+            .into_iter()
+            .filter_entry(|e| !is_hidden(e));
+        for entry in dir_walker {
+            if let Ok(entry) = entry {
+                let entry_path = entry.path();
+                if entry_path.is_file() {
+                    let end_comp : Vec<Component> = entry_path
+                        .components()
+                        .skip(base_components_length)
+                        .collect();
+                    if end_comp.len() == 3 {
+                        if let Some(zoom) = parse_component(end_comp[0], None) {
+                            if let Some(row) = parse_component(end_comp[1], None) {
+                                if let Some(col) = parse_component(end_comp[1], flag_image_format) {
+                                    println!("Zoom: {}, Row: {}, Col {}", zoom, row, col);
+                                }
+                            }
+                        }
+                    }
+                }
+                println!("{}", entry.path().display());
+
+            }
+        }
+
+        /* if let Ok(dir_entries) = input_path.read_dir() {
             for zoom_entry in dir_entries {
                 if let Ok(zoom_dir) = zoom_entry {
                     println!("{:?}", zoom_dir.path().as_path());
+                    if let Ok(zoom_metadata) = zoom_dir.metadata() {
+                        //if zoom_metadata.is_dir()
+                    }
                 } else {
                     continue;
                 }
             }
-        }
+        }*/
     } else {
         panic!("Can only import from a directory")
     }
 }
 
-fn export(input: String, output: Option<String>,
-    flag_scheme: Scheme,
-    flag_image_format: Option<ImageFormat>,
-    flag_grid_callback: Option<String>) {
+// fn get_dirs(path: &Path) -> Result<Vec<DirEntry>, io::Error> {
+// let dir_entries = try!(path.read_dir());
+// dir_entries
+// .map(|res| res)
+// .filter_map(|zoom_dir| zoom_dir.or_else)
+// .collect()
+// for zoom_entry in dir_entries {
+// if let Ok(zoom_dir) = zoom_entry {
+// println!("{:?}", zoom_dir.path().as_path());
+// if let Ok(zoom_metadata) = zoom_dir.metadata() {
+// if zoom_metadata.is_dir()
+// }
+// } else {
+// continue;
+// }
+// }
+// }
+
+fn export(input: String,
+          output: Option<String>,
+          flag_scheme: Scheme,
+          flag_image_format: Option<ImageFormat>,
+          flag_grid_callback: Option<String>) {
     let input_path = Path::new(&input);
     if input_path.is_file() {
     } else {
@@ -149,10 +250,11 @@ fn export(input: String, output: Option<String>,
     }
 }
 
-fn metadata(input: String, output: Option<String>,
-    flag_scheme: Scheme,
-    flag_image_format: Option<ImageFormat>,
-    flag_grid_callback: Option<String>) {
+fn metadata(input: String,
+            output: Option<String>,
+            flag_scheme: Scheme,
+            flag_image_format: Option<ImageFormat>,
+            flag_grid_callback: Option<String>) {
     let input_path = Path::new(&input);
     if input_path.is_file() {
     } else {

@@ -7,3 +7,6 @@ authors = ["Arnaud Marant <arnaudmarant@gmail.com>"]
 docopt = "0.6"
 rustc-serialize = "0.3"
 rusqlite = "0.6.0"
+walkdir = "0.1"
+clippy = "*"
+regex = "0.1"
