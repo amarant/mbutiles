@@ -6,12 +6,20 @@ extern crate docopt;
 extern crate rusqlite;
 extern crate walkdir;
 extern crate regex;
+#[macro_use(log, info, error)]
+extern crate log;
+extern crate stdio_logger;
 
 use docopt::Docopt;
 use rusqlite::Connection;
 use std::iter::Iterator;
 use walkdir::{DirEntry, WalkDir, WalkDirIterator};
 use std::path::{Path, Component};
+use std::fs::File;
+use std::io;
+use std::io::prelude::*;
+use log::{Log, LogLevel};
+use stdio_logger::Logger;
 
 const USAGE: &'static str = "
 MBTiles utils.
@@ -24,6 +32,7 @@ Usage:
 
 Options:
   -h --help                   Show this help message and exit.
+  --verbose                   Show log info.
   --version                   Show version.
   --scheme=<scheme>           Tiling scheme of the tiles. Default is \"xyz\" (z/x/y), other options are \"tms\" which is also z/x/y but uses a flipped y coordinate, and \"wms\" which replicates the MapServer WMS TileCache directory structure \"z/000/000/x/000/000/y.png\". [default: xyz]
   --image-format=<format>     The format of the image tiles, either png, jpg, webp or pbf.
@@ -60,6 +69,7 @@ enum ImageFormat {
 #[derive(RustcDecodable, Debug)]
 struct Args {
     arg_command: Command,
+    flag_verbose: bool,
     flag_scheme: Scheme,
     flag_image_format: Option<ImageFormat>,
     flag_grid_callback: Option<String>,
@@ -71,7 +81,9 @@ fn main() {
     let args: Args = Docopt::new(USAGE)
                          .and_then(|d| d.decode())
                          .unwrap_or_else(|e| e.exit());
-    println!("{:?}", args);
+    stdio_logger::init(if args.flag_verbose {LogLevel::Info} else {LogLevel::Error})
+        .expect("Could not initialize logging");
+    info!("{:?}", args);
     match args.arg_command {
         Command::Import => {
             // import tiles dir into mbtiles
@@ -97,11 +109,20 @@ fn mbtiles_connect(mbtiles_file: &Path) -> Connection {
 }
 
 fn optimize_connection(connection: &Connection) {
-    connection.execute_batch("
-    PRAGMA synchronous=0;
-    PRAGMA locking_mode=EXCLUSIVE;
-    PRAGMA journal_mode=DELETE;
-    ");
+    if let Err(err) = connection.execute_batch("
+        PRAGMA synchronous=0;
+        PRAGMA locking_mode=EXCLUSIVE;
+        PRAGMA journal_mode=DELETE;
+        ") {
+        error!("Cannot execute sqlite optimization query {:?}", err);
+    }
+}
+
+struct Tile {
+    zoom_level: Option<i32>,
+    tile_column: Option<i32>,
+    tile_row: Option<i32>,
+    tile_data: Option<Vec<u8>>,
 }
 
 fn mbtiles_setup(connection: &Connection) {
@@ -139,26 +160,28 @@ fn get_extension(image_format: ImageFormat) -> String {
     }
 }
 
-fn parse_component(component: Component, parse_file: Option<ImageFormat>) -> Option<i32> {
+fn parse_component(component: Component, parse_file: Option<ImageFormat>) -> Option<u32> {
     if let Component::Normal(zoom_dir) = component {
         zoom_dir.to_str()
             .ok_or("no component".to_owned())
             .and_then(|s| {
                 if let Some(image_format) = parse_file {
                     let parts: Vec<&str> = s.split('.').collect();
-                    if parts[1] == get_extension(image_format) {
-                        parts[0].parse::<i32>().map_err(|err| err.to_string())
+                    let filtered_extension = get_extension(image_format);
+                    if parts[1] == filtered_extension {
+                        parts[0].parse::<u32>().map_err(|err| err.to_string())
                     } else {
-                        Err("r".to_owned())
+                        Err(format!("The filtered extention {} is different \
+than the path\'s extention {}", filtered_extension, parts[1]).to_owned())
                     }
                 } else {
-                    s.parse::<i32>().map_err(|err| err.to_string())
+                    s.parse::<u32>().map_err(|err| err.to_string())
                 }
             })
-            .map_err(|err| println!("{:?}", err))
+            .map_err(|err| error!("{:?}", err))
             .ok()
     } else {
-        println!("fail");
+        error!("Can't read path component {:?}", component);
         None
     }
 }
@@ -191,52 +214,43 @@ fn import(input: &Path,
                     if end_comp.len() == 3 {
                         if let Some(zoom) = parse_component(end_comp[0], None) {
                             if let Some(row) = parse_component(end_comp[1], None) {
-                                if let Some(col) = parse_component(end_comp[1], flag_image_format) {
-                                    println!("Zoom: {}, Row: {}, Col {}", zoom, row, col);
+                                if let Some(col) = parse_component(end_comp[2], flag_image_format) {
+                                    info!("Zoom: {}, Row: {}, Col {}", zoom, row, col);
+                                    insert_image_sqlite(entry_path, zoom, col, row, &connection);
                                 }
                             }
                         }
                     }
                 }
-                println!("{}", entry.path().display());
+                info!("{}", entry.path().display());
 
             }
         }
-
-        /* if let Ok(dir_entries) = input_path.read_dir() {
-            for zoom_entry in dir_entries {
-                if let Ok(zoom_dir) = zoom_entry {
-                    println!("{:?}", zoom_dir.path().as_path());
-                    if let Ok(zoom_metadata) = zoom_dir.metadata() {
-                        //if zoom_metadata.is_dir()
-                    }
-                } else {
-                    continue;
-                }
-            }
-        }*/
     } else {
-        panic!("Can only import from a directory")
+        error!("Can only import from a directory")
     }
 }
 
-// fn get_dirs(path: &Path) -> Result<Vec<DirEntry>, io::Error> {
-// let dir_entries = try!(path.read_dir());
-// dir_entries
-// .map(|res| res)
-// .filter_map(|zoom_dir| zoom_dir.or_else)
-// .collect()
-// for zoom_entry in dir_entries {
-// if let Ok(zoom_dir) = zoom_entry {
-// println!("{:?}", zoom_dir.path().as_path());
-// if let Ok(zoom_metadata) = zoom_dir.metadata() {
-// if zoom_metadata.is_dir()
-// }
-// } else {
-// continue;
-// }
-// }
-// }
+fn insert_image_sqlite(image_path: &Path, zoom: u32, column: u32, row: u32, connection: &Connection) {
+    match File::open(image_path) {
+        Ok(mut image_file) =>  {
+            let mut buffer = Vec::new();
+            if image_file.read_to_end(&mut buffer).is_ok() {
+                if let Err(err) = connection.execute("insert into tiles (zoom_level,
+                            tile_column, tile_row, tile_data) values
+                            ($1, $2, $3, $4);",
+                            &[&(zoom as i64), &(column as i64), &(row as i64), &buffer]) {
+                                error!("Can't insert {:?}, {}", image_path, err);
+                }
+            } else {
+                error!("Can't read file {:?}", image_path);
+            }
+        },
+        Err(err) => {
+            error!("Can't open {:?} =>  {:?}", image_path, err);
+        }
+    }
+}
 
 fn export(input: String,
           output: Option<String>,
@@ -246,7 +260,7 @@ fn export(input: String,
     let input_path = Path::new(&input);
     if input_path.is_file() {
     } else {
-        panic!("Can only export from a file")
+        error!("Can only export from a file")
     }
 }
 
@@ -258,6 +272,6 @@ fn metadata(input: String,
     let input_path = Path::new(&input);
     if input_path.is_file() {
     } else {
-        panic!("Can only dumps from a file")
+        error!("Can only dumps from a file")
     }
 }
