@@ -6,7 +6,7 @@ extern crate docopt;
 extern crate rusqlite;
 extern crate walkdir;
 extern crate regex;
-#[macro_use(log, info, error)]
+#[macro_use(log, info, debug, error)]
 extern crate log;
 extern crate stdio_logger;
 
@@ -90,6 +90,7 @@ enum InnerError {
     IO(io::Error),
     Rusqlite(rusqlite::Error),
     ParseInt(num::ParseIntError),
+    WalkDir(walkdir::Error),
 }
 
 struct MBTileError {
@@ -110,6 +111,7 @@ impl std::fmt::Display for InnerError {
             InnerError::IO(ref err) => write!(f, ", IO error: {}", err),
             InnerError::Rusqlite(ref err) => write!(f, ", SQLite error: {}", err),
             InnerError::ParseInt(ref err) => write!(f, ", Parse integer error: {}", err),
+            InnerError::WalkDir(ref err) => write!(f, ", Directory Walker error: {}", err),
         }
     }
 }
@@ -153,8 +155,8 @@ fn main() {
     }
 }
 
-fn mbtiles_connect(mbtiles_file: &Path) -> Connection {
-    Connection::open(mbtiles_file).unwrap()
+fn mbtiles_connect(mbtiles_file: &Path) -> Result<Connection, MBTileError> {
+    Connection::open(mbtiles_file).to_mbtiles_result(format!("Can't connect to {:?}", mbtiles_file))
 }
 
 macro_rules! log_err {
@@ -168,14 +170,13 @@ macro_rules! log_err {
     }
 }
 
-fn optimize_connection(connection: &Connection) {
-    if let Err(err) = connection.execute_batch("
+fn optimize_connection(connection: &Connection) -> Result<(), MBTileError> {
+    connection.execute_batch("
         PRAGMA synchronous=0;
         PRAGMA locking_mode=EXCLUSIVE;
         PRAGMA journal_mode=DELETE;
-        ") {
-        error!("Cannot execute sqlite optimization query {:?}", err);
-    }
+        ")
+              .to_mbtiles_result("Cannot execute sqlite optimization query".to_owned())
 }
 
 fn optimize_database(connection: &Connection) -> Result<(), MBTileError> {
@@ -190,29 +191,46 @@ trait ToMBTilesResult<T: Sized, E: Sized> {
     fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError>;
 }
 
-impl <T: Sized> ToMBTilesResult<T, io::Error> for Result<T, io::Error> {
+impl<T: Sized> ToMBTilesResult<T, io::Error> for Result<T, io::Error> {
     fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError> {
-        self.map_err(|err| MBTileError {
+        self.map_err(|err| {
+            MBTileError {
                 message: message,
                 inner_error: InnerError::IO(err),
+            }
         })
     }
 }
 
-impl <T: Sized> ToMBTilesResult<T, rusqlite::Error> for Result<T, rusqlite::Error> {
+impl<T: Sized> ToMBTilesResult<T, rusqlite::Error> for Result<T, rusqlite::Error> {
     fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError> {
-        self.map_err(|err| MBTileError {
+        self.map_err(|err| {
+            MBTileError {
                 message: message,
                 inner_error: InnerError::Rusqlite(err),
+            }
         })
     }
 }
 
-impl <T: Sized> ToMBTilesResult<T, num::ParseIntError> for Result<T, num::ParseIntError> {
+impl<T: Sized> ToMBTilesResult<T, num::ParseIntError> for Result<T, num::ParseIntError> {
     fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError> {
-        self.map_err(|err| MBTileError {
+        self.map_err(|err| {
+            MBTileError {
                 message: message,
                 inner_error: InnerError::ParseInt(err),
+            }
+        })
+    }
+}
+
+impl<T: Sized> ToMBTilesResult<T, walkdir::Error> for Result<T, walkdir::Error> {
+    fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError> {
+        self.map_err(|err| {
+            MBTileError {
+                message: message,
+                inner_error: InnerError::WalkDir(err),
+            }
         })
     }
 }
@@ -233,13 +251,14 @@ fn mbtiles_setup(connection: &Connection) -> Result<(), MBTileError> {
         CREATE UNIQUE INDEX name ON metadata (name);
         CREATE UNIQUE INDEX tile_index ON tiles
             (zoom_level, tile_column, tile_row);
-    ").to_mbtiles_result("Can't create schema".to_owned())
+    ")
+              .to_mbtiles_result("Can't create schema".to_owned())
 }
 
-fn is_hidden(entry: &DirEntry) -> bool {
+fn is_visible(entry: &DirEntry) -> bool {
     entry.file_name()
          .to_str()
-         .map_or(false, |s| s.starts_with('.'))
+         .map_or(false, |s| !s.starts_with('.'))
 }
 
 fn get_extension(image_format: ImageFormat) -> String {
@@ -251,24 +270,26 @@ fn get_extension(image_format: ImageFormat) -> String {
     }
 }
 
-fn parse_component(component: Component, parse_file: Option<ImageFormat>) -> Result<u32, MBTileError> {
+fn parse_component(component: Component,
+                   parse_file: Option<ImageFormat>)
+                   -> Result<u32, MBTileError> {
     if let Component::Normal(zoom_dir) = component {
         let s = try!(zoom_dir.to_str()
-                .ok_or(MBTileError {
-                    message: format!("Unvalid unicode path: {:?}", zoom_dir),
-                    inner_error: InnerError::None,
-                }));
+                             .ok_or(MBTileError {
+                                 message: format!("Unvalid unicode path: {:?}", zoom_dir),
+                                 inner_error: InnerError::None,
+                             }));
         if let Some(image_format) = parse_file {
             let parts: Vec<&str> = s.split('.').collect();
             let filtered_extension = get_extension(image_format);
             if parts[1] == filtered_extension {
                 parts[0].parse::<u32>().to_mbtiles_result("".to_owned())
             } else {
-                Err(MBTileError{
+                Err(MBTileError {
                     message: format!("The filtered extention {} is different than the path's \
                              extention {}",
-                            filtered_extension,
-                            parts[1]),
+                                     filtered_extension,
+                                     parts[1]),
                     inner_error: InnerError::None,
                 })
             }
@@ -287,74 +308,70 @@ fn import(input: &Path,
           output: &Path,
           flag_scheme: Scheme,
           flag_image_format: Option<ImageFormat>,
-          flag_grid_callback: Option<String>) -> Result<(), MBTileError> {
-    let input_path = Path::new(&input);
-    if input_path.is_dir() {
-        let connection = mbtiles_connect(output);
-        optimize_connection(&connection);
-        try!(mbtiles_setup(&connection));
-        let base_components_length = input_path.components().count();
-        let dir_walker = WalkDir::new(input_path)
-                             .follow_links(true)
-                             .min_depth(1)
-                             .max_depth(3)
-                             .into_iter()
-                             .filter_entry(|e| !is_hidden(e));
-        for entry in dir_walker {
-            if let Ok(entry) = entry {
-                let entry_path = entry.path();
-                if entry_path.is_file() {
-                    let end_comp: Vec<Component> = entry_path.components()
-                                                             .skip(base_components_length)
-                                                             .collect();
-                    if end_comp.len() == 3 {
-                        parse_component(end_comp[0], None)
-                        .and_then(|zoom| parse_component(end_comp[1], None)
-                            .and_then(|row| parse_component(end_comp[2], flag_image_format)
-                                .and_then(|col| {
-                                    info!("Zoom: {}, Row: {}, Col {}", zoom, row, col);
-                                    insert_image_sqlite(entry_path, zoom, col, row, &connection)
-                                })
-                            )
-                        ).unwrap_or_else(|err| error!("{}", err))
-
-                    }
-
-                }
-                info!("{}", entry.path().display());
-            }
-        }
-        try!(optimize_database(&connection));
-        Ok(())
-    } else {
-        Err(MBTileError {
+          flag_grid_callback: Option<String>)
+          -> Result<(), MBTileError> {
+    info!("Importing disk to MBTiles");
+    debug!("{:?} --> {:?}", &input, &output);
+    if !input.is_dir() {
+        return Err(MBTileError {
             message: "Can only import from a directory".to_owned(),
             inner_error: InnerError::None,
-        })
+        });
     }
+    let connection = try!(mbtiles_connect(output));
+    try!(optimize_connection(&connection));
+    try!(mbtiles_setup(&connection));
+    let base_components_length = input.components().count();
+    let dir_walker = WalkDir::new(input)
+                         .follow_links(true)
+                         .min_depth(1)
+                         .max_depth(3)
+                         .into_iter()
+                         .filter_entry(is_visible);
+    for entry_res in dir_walker {
+        let entry = try!(entry_res.to_mbtiles_result("".to_owned()));
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            // ignore directories
+            continue;
+        }
+        let end_comp: Vec<Component> = entry_path.components()
+                                                 .skip(base_components_length)
+                                                 .collect();
+        if end_comp.len() == 3 {
+            parse_component(end_comp[0], None)
+                .and_then(|zoom| {
+                    parse_component(end_comp[1], None).and_then(|row| {
+                        parse_component(end_comp[2], flag_image_format).and_then(|col| {
+                            info!("Zoom: {}, Row: {}, Col {}", zoom, row, col);
+                            insert_image_sqlite(entry_path, zoom, col, row, &connection)
+                        })
+                    })
+                })
+                .unwrap_or_else(|err| error!("{}", err))
+        }
+        info!("{}", entry.path().display());
+    }
+    try!(optimize_database(&connection));
+    Ok(())
 }
 
 fn insert_image_sqlite(image_path: &Path,
                        zoom: u32,
                        column: u32,
                        row: u32,
-                       connection: &Connection) -> Result<(), MBTileError> {
+                       connection: &Connection)
+                       -> Result<(), MBTileError> {
     let mut image_file = try!(File::open(image_path)
-        .to_mbtiles_result(format!("Can't open {:?}", image_path)));
+                                  .to_mbtiles_result(format!("Can't open {:?}", image_path)));
     let mut buffer = Vec::new();
     try!(image_file.read_to_end(&mut buffer)
-        .to_mbtiles_result(format!("Can't read file {:?}", image_path)));
+                   .to_mbtiles_result(format!("Can't read file {:?}", image_path)));
     try!(connection.execute("insert into tiles (zoom_level,
                     tile_column, tile_row, tile_data) values
                     ($1, $2, $3, $4);",
-                                             &[&(zoom as i64),
-                                               &(column as i64),
-                                               &(row as i64),
-                                               &buffer])
-                                               .to_mbtiles_result(format!("Can't insert {:?}", image_path)));
-    //error!("Can't insert {:?}, {}", image_path, err);
-    //    error!("Can't read file {:?}", image_path);
-    //error!("Can't open {:?} =>  {:?}", image_path, err);
+                            &[&(zoom as i64), &(column as i64), &(row as i64), &buffer])
+                   .to_mbtiles_result(format!("Can't insert {:?}", image_path)));
     Ok(())
 }
 
