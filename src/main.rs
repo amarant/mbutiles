@@ -16,13 +16,12 @@ use std::iter::Iterator;
 use walkdir::{DirEntry, WalkDir, WalkDirIterator};
 use std::path::{Path, Component};
 use std::fs::File;
-use std::io;
 use std::io::prelude::*;
-use log::{Log, LogLevel};
-use stdio_logger::Logger;
-use std::num;
-use std::io::Error;
+use log::LogLevel;
 use std::fmt;
+use mbtile_error::{InnerError, MBTileError, ToMBTilesResult};
+
+mod mbtile_error;
 
 const USAGE: &'static str = "
 MBTiles utils.
@@ -84,26 +83,6 @@ struct Args {
     arg_output: Option<String>,
 }
 
-#[derive(Debug)]
-enum InnerError {
-    None,
-    IO(io::Error),
-    Rusqlite(rusqlite::Error),
-    ParseInt(num::ParseIntError),
-    WalkDir(walkdir::Error),
-}
-
-struct MBTileError {
-    message: String,
-    inner_error: InnerError,
-}
-
-impl std::fmt::Debug for MBTileError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self)
-    }
-}
-
 impl std::fmt::Display for InnerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -113,12 +92,6 @@ impl std::fmt::Display for InnerError {
             InnerError::ParseInt(ref err) => write!(f, ", Parse integer error: {}", err),
             InnerError::WalkDir(ref err) => write!(f, ", Directory Walker error: {}", err),
         }
-    }
-}
-
-impl std::fmt::Display for MBTileError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}{}", self.message, self.inner_error)
     }
 }
 
@@ -159,17 +132,6 @@ fn mbtiles_connect(mbtiles_file: &Path) -> Result<Connection, MBTileError> {
     Connection::open(mbtiles_file).to_mbtiles_result(format!("Can't connect to {:?}", mbtiles_file))
 }
 
-macro_rules! log_err {
-    ($e:expr) => {
-        match $e {
-            Ok(_) => (),
-            Err(e) => {
-                error!("{:?}", e);
-            }
-        }
-    }
-}
-
 fn optimize_connection(connection: &Connection) -> Result<(), MBTileError> {
     connection.execute_batch("
         PRAGMA synchronous=0;
@@ -185,54 +147,6 @@ fn optimize_database(connection: &Connection) -> Result<(), MBTileError> {
     info!("SQLite vacuum");
     try!(connection.execute_batch("VACUUM;").to_mbtiles_result("Can't vacuum sqlite".to_owned()));
     Ok(())
-}
-
-trait ToMBTilesResult<T: Sized, E: Sized> {
-    fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError>;
-}
-
-impl<T: Sized> ToMBTilesResult<T, io::Error> for Result<T, io::Error> {
-    fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError> {
-        self.map_err(|err| {
-            MBTileError {
-                message: message,
-                inner_error: InnerError::IO(err),
-            }
-        })
-    }
-}
-
-impl<T: Sized> ToMBTilesResult<T, rusqlite::Error> for Result<T, rusqlite::Error> {
-    fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError> {
-        self.map_err(|err| {
-            MBTileError {
-                message: message,
-                inner_error: InnerError::Rusqlite(err),
-            }
-        })
-    }
-}
-
-impl<T: Sized> ToMBTilesResult<T, num::ParseIntError> for Result<T, num::ParseIntError> {
-    fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError> {
-        self.map_err(|err| {
-            MBTileError {
-                message: message,
-                inner_error: InnerError::ParseInt(err),
-            }
-        })
-    }
-}
-
-impl<T: Sized> ToMBTilesResult<T, walkdir::Error> for Result<T, walkdir::Error> {
-    fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError> {
-        self.map_err(|err| {
-            MBTileError {
-                message: message,
-                inner_error: InnerError::WalkDir(err),
-            }
-        })
-    }
 }
 
 fn mbtiles_setup(connection: &Connection) -> Result<(), MBTileError> {
