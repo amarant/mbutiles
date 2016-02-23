@@ -77,3 +77,15 @@ impl<T: Sized> ToMBTilesResult<T, walkdir::Error> for Result<T, walkdir::Error> 
         })
     }
 }
+
+impl Display for InnerError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            InnerError::None => write!(f, ""),
+            InnerError::IO(ref err) => write!(f, ", IO error: {}", err),
+            InnerError::Rusqlite(ref err) => write!(f, ", SQLite error: {}", err),
+            InnerError::ParseInt(ref err) => write!(f, ", Parse integer error: {}", err),
+            InnerError::WalkDir(ref err) => write!(f, ", Directory Walker error: {}", err),
+        }
+    }
+}
