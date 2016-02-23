@@ -1,11 +1,11 @@
 use rusqlite::Connection;
 use std::iter::Iterator;
 use walkdir::{DirEntry, WalkDir, WalkDirIterator};
-use std::path::{Path, Component};
+use std::path::{Component, Path};
 use std::fs::File;
 use std::io::prelude::*;
-use log::LogLevel;
 use mbtile_error::{InnerError, MBTileError, ToMBTilesResult};
+use rustc_serialize::json::Json;
 
 #[derive(RustcDecodable, Debug)]
 pub enum Command {
@@ -119,12 +119,37 @@ fn parse_component(component: Component,
     }
 }
 
+fn insert_metadata(input: &Path, connection: &Connection) -> Result<(), MBTileError> {
+    if input.is_file() {
+        info!("metadata.json was not found");
+        return Ok(());
+    }
+    let mut metadata_file = try!(File::open(input.join("metadata.json"))
+                                     .to_mbtiles_result("".to_owned()));
+    let mut buffer = String::new();
+    try!(metadata_file.read_to_string(&mut buffer)
+                      .to_mbtiles_result("metadata.json wasn't readable".to_owned()));
+    // TODO: use try! add error type
+    if let Ok(data) = Json::from_str(buffer.as_str()) {
+        if data.is_object() {
+            let obj = data.as_object().unwrap();
+            for (key, value) in obj.iter() {
+                try!(connection.execute("insert into metadata (name, value) values ($1, $2)",
+                                        &[key, &value.as_string().unwrap()])
+                               .to_mbtiles_result("".to_owned()));
+            }
+        }
+    }
+    info!("metadata.json was restored");
+    Ok(())
+}
+
 pub fn import(input: &Path,
-          output: &Path,
-          flag_scheme: Scheme,
-          flag_image_format: Option<ImageFormat>,
-          flag_grid_callback: Option<String>)
-          -> Result<(), MBTileError> {
+              output: &Path,
+              flag_scheme: Scheme,
+              flag_image_format: Option<ImageFormat>,
+              flag_grid_callback: Option<String>)
+              -> Result<(), MBTileError> {
     info!("Importing disk to MBTiles");
     debug!("{:?} --> {:?}", &input, &output);
     if !input.is_dir() {
@@ -136,6 +161,7 @@ pub fn import(input: &Path,
     let connection = try!(mbtiles_connect(output));
     try!(optimize_connection(&connection));
     try!(mbtiles_setup(&connection));
+    insert_metadata(&input, &connection);
     let base_components_length = input.components().count();
     let dir_walker = WalkDir::new(input)
                          .follow_links(true)
@@ -191,10 +217,10 @@ fn insert_image_sqlite(image_path: &Path,
 }
 
 pub fn export(input: String,
-          output: Option<String>,
-          flag_scheme: Scheme,
-          flag_image_format: Option<ImageFormat>,
-          flag_grid_callback: Option<String>) {
+              output: Option<String>,
+              flag_scheme: Scheme,
+              flag_image_format: Option<ImageFormat>,
+              flag_grid_callback: Option<String>) {
     let input_path = Path::new(&input);
     if input_path.is_file() {
     } else {
@@ -203,10 +229,10 @@ pub fn export(input: String,
 }
 
 pub fn metadata(input: String,
-            output: Option<String>,
-            flag_scheme: Scheme,
-            flag_image_format: Option<ImageFormat>,
-            flag_grid_callback: Option<String>) {
+                output: Option<String>,
+                flag_scheme: Scheme,
+                flag_image_format: Option<ImageFormat>,
+                flag_grid_callback: Option<String>) {
     let input_path = Path::new(&input);
     if input_path.is_file() {
     } else {

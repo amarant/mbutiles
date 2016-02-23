@@ -2,7 +2,7 @@ use std::io;
 use rusqlite;
 use std::num;
 use walkdir;
-use std::fmt::{self, Display, Debug};
+use std::fmt::{self, Debug, Display};
 
 #[derive(Debug)]
 pub enum InnerError {

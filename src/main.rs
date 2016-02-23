@@ -13,7 +13,7 @@ extern crate stdio_logger;
 use docopt::Docopt;
 use std::path::Path;
 use log::LogLevel;
-use mbtiles::{Command, Scheme, ImageFormat, import, export, metadata};
+use mbtiles::{Command, ImageFormat, Scheme, export, import, metadata};
 
 mod mbtile_error;
 mod mbtiles;
