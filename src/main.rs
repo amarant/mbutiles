@@ -1,5 +1,6 @@
 #![feature(plugin)]
 #![plugin(clippy)]
+#![feature(trace_macros, log_syntax)]
 
 extern crate rustc_serialize;
 extern crate docopt;
@@ -15,6 +16,7 @@ use std::path::Path;
 use log::LogLevel;
 use mbtiles::{Command, ImageFormat, Scheme, export, import, metadata};
 
+#[macro_use]
 mod mbtile_error;
 mod mbtiles;
 

@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::prelude::*;
 use mbtile_error::{InnerError, MBTileError, ToMBTilesResult};
 use rustc_serialize::json::Json;
+use std::convert;
 
 #[derive(RustcDecodable, Debug)]
 pub enum Command {
@@ -44,9 +45,9 @@ fn optimize_connection(connection: &Connection) -> Result<(), MBTileError> {
 
 fn optimize_database(connection: &Connection) -> Result<(), MBTileError> {
     info!("SQLite analyse");
-    try!(connection.execute_batch("ANALYZE;").to_mbtiles_result("Can't analyze sqlite".to_owned()));
+    try_desc!(connection.execute_batch("ANALYZE;"), "Can't analyze sqlite");
     info!("SQLite vacuum");
-    try!(connection.execute_batch("VACUUM;").to_mbtiles_result("Can't vacuum sqlite".to_owned()));
+    try_desc!(connection.execute_batch("VACUUM;"), "Can't vacuum sqlite");
     Ok(())
 }
 
@@ -124,19 +125,19 @@ fn insert_metadata(input: &Path, connection: &Connection) -> Result<(), MBTileEr
         info!("metadata.json was not found");
         return Ok(());
     }
-    let mut metadata_file = try!(File::open(input.join("metadata.json"))
-                                     .to_mbtiles_result("".to_owned()));
+    let mut metadata_file = try_desc!(File::open(input.join("metadata.json")),
+        "Can't open metadata.json");
     let mut buffer = String::new();
-    try!(metadata_file.read_to_string(&mut buffer)
-                      .to_mbtiles_result("metadata.json wasn't readable".to_owned()));
+    try_desc!(metadata_file.read_to_string(&mut buffer),
+                      "metadata.json wasn't readable");
     // TODO: use try! add error type
     if let Ok(data) = Json::from_str(buffer.as_str()) {
         if data.is_object() {
             let obj = data.as_object().unwrap();
             for (key, value) in obj.iter() {
-                try!(connection.execute("insert into metadata (name, value) values ($1, $2)",
-                                        &[key, &value.as_string().unwrap()])
-                               .to_mbtiles_result("".to_owned()));
+                try_desc!(connection.execute("insert into metadata (name, value) values ($1, $2)",
+                                        &[key, &value.as_string().unwrap()]),
+                               "Can't insert medata in database");
             }
         }
     }
@@ -170,7 +171,7 @@ pub fn import(input: &Path,
                          .into_iter()
                          .filter_entry(is_visible);
     for entry_res in dir_walker {
-        let entry = try!(entry_res.to_mbtiles_result("".to_owned()));
+        let entry = try_desc!(entry_res, "invalid entry");
         let entry_path = entry.path();
         if entry_path.is_dir() {
             // ignore directories
@@ -203,8 +204,8 @@ fn insert_image_sqlite(image_path: &Path,
                        row: u32,
                        connection: &Connection)
                        -> Result<(), MBTileError> {
-    let mut image_file = try!(File::open(image_path)
-                                  .to_mbtiles_result(format!("Can't open {:?}", image_path)));
+    let mut image_file = try_desc!(File::open(image_path),
+                                  format!("Can't open {:?}", image_path));
     let mut buffer = Vec::new();
     try!(image_file.read_to_end(&mut buffer)
                    .to_mbtiles_result(format!("Can't read file {:?}", image_path)));

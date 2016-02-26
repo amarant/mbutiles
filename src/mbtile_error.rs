@@ -1,4 +1,4 @@
-use std::io;
+use std::{convert, io};
 use rusqlite;
 use std::num;
 use walkdir;
@@ -27,6 +27,46 @@ impl Display for MBTileError {
 impl Debug for MBTileError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self)
+    }
+}
+
+#[macro_export]
+macro_rules! try_desc {
+    ($expr:expr, $arg:expr) => (match $expr {
+        Ok(val) => val,
+        Err(err) => {
+            return Err(convert::From::from((err, $arg)));
+        }
+    });
+}
+
+impl convert::From<(io::Error, String)> for MBTileError {
+    fn from((kind, message): (io::Error, String)) -> MBTileError {
+        MBTileError { message: message.to_owned(), inner_error: convert::From::from(kind) }
+    }
+}
+
+impl convert::From<(io::Error, &'static str)> for MBTileError {
+    fn from((kind, message): (io::Error, &'static str)) -> MBTileError {
+        MBTileError { message: message.to_owned(), inner_error: convert::From::from(kind) }
+    }
+}
+
+impl convert::From<(io::Error)> for InnerError {
+    fn from(error: io::Error) -> InnerError {
+        InnerError::IO(error)
+    }
+}
+
+impl convert::From<(rusqlite::Error, &'static str)> for MBTileError {
+    fn from((kind, message): (rusqlite::Error, &'static str)) -> MBTileError {
+        MBTileError { message: message.to_owned(), inner_error: convert::From::from(kind) }
+    }
+}
+
+impl convert::From<(rusqlite::Error)> for InnerError {
+    fn from(error: rusqlite::Error) -> InnerError {
+        InnerError::Rusqlite(error)
     }
 }
 
