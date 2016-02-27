@@ -40,83 +40,39 @@ macro_rules! try_desc {
     });
 }
 
-impl convert::From<(io::Error, String)> for MBTileError {
-    fn from((kind, message): (io::Error, String)) -> MBTileError {
-        MBTileError { message: message.to_owned(), inner_error: convert::From::from(kind) }
-    }
-}
-
-impl convert::From<(io::Error, &'static str)> for MBTileError {
-    fn from((kind, message): (io::Error, &'static str)) -> MBTileError {
-        MBTileError { message: message.to_owned(), inner_error: convert::From::from(kind) }
-    }
-}
-
-impl convert::From<(io::Error)> for InnerError {
-    fn from(error: io::Error) -> InnerError {
-        InnerError::IO(error)
-    }
-}
-
-impl convert::From<(rusqlite::Error, &'static str)> for MBTileError {
-    fn from((kind, message): (rusqlite::Error, &'static str)) -> MBTileError {
-        MBTileError { message: message.to_owned(), inner_error: convert::From::from(kind) }
-    }
-}
-
-impl convert::From<(rusqlite::Error)> for InnerError {
-    fn from(error: rusqlite::Error) -> InnerError {
-        InnerError::Rusqlite(error)
-    }
-}
-
-pub trait ToMBTilesResult<T: Sized, E: Sized> {
-    fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError>;
-}
-
-impl<T: Sized> ToMBTilesResult<T, io::Error> for Result<T, io::Error> {
-    fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError> {
-        self.map_err(|err| {
-            MBTileError {
-                message: message,
-                inner_error: InnerError::IO(err),
+macro_rules! from_MBTileError {
+    ($source_error:ty, $message_type:ty) => (
+        impl convert::From<($source_error, $message_type)> for MBTileError {
+            fn from((kind, message): ($source_error, $message_type)) -> MBTileError {
+                MBTileError { message: message.to_owned(), inner_error: convert::From::from(kind) }
             }
-        })
-    }
+        }
+    )
 }
 
-impl<T: Sized> ToMBTilesResult<T, rusqlite::Error> for Result<T, rusqlite::Error> {
-    fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError> {
-        self.map_err(|err| {
-            MBTileError {
-                message: message,
-                inner_error: InnerError::Rusqlite(err),
+from_MBTileError!(io::Error, String);
+from_MBTileError!(io::Error, &'static str);
+from_MBTileError!(walkdir::Error, String);
+from_MBTileError!(walkdir::Error, &'static str);
+from_MBTileError!(rusqlite::Error, String);
+from_MBTileError!(rusqlite::Error, &'static str);
+from_MBTileError!(num::ParseIntError, String);
+from_MBTileError!(num::ParseIntError, &'static str);
+
+macro_rules! from_InnerError {
+    ($source_error:ty, $selector:ident) => (
+        impl convert::From<($source_error)> for InnerError {
+            fn from(error: $source_error) -> InnerError {
+                InnerError::$selector(error)
             }
-        })
-    }
+        }
+    )
 }
 
-impl<T: Sized> ToMBTilesResult<T, num::ParseIntError> for Result<T, num::ParseIntError> {
-    fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError> {
-        self.map_err(|err| {
-            MBTileError {
-                message: message,
-                inner_error: InnerError::ParseInt(err),
-            }
-        })
-    }
-}
-
-impl<T: Sized> ToMBTilesResult<T, walkdir::Error> for Result<T, walkdir::Error> {
-    fn to_mbtiles_result(self, message: String) -> Result<T, MBTileError> {
-        self.map_err(|err| {
-            MBTileError {
-                message: message,
-                inner_error: InnerError::WalkDir(err),
-            }
-        })
-    }
-}
+from_InnerError!(io::Error, IO);
+from_InnerError!(walkdir::Error, WalkDir);
+from_InnerError!(rusqlite::Error, Rusqlite);
+from_InnerError!(num::ParseIntError, ParseInt);
 
 impl Display for InnerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

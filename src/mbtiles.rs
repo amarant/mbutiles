@@ -4,7 +4,7 @@ use walkdir::{DirEntry, WalkDir, WalkDirIterator};
 use std::path::{Component, Path};
 use std::fs::File;
 use std::io::prelude::*;
-use mbtile_error::{InnerError, MBTileError, ToMBTilesResult};
+use mbtile_error::{InnerError, MBTileError};
 use rustc_serialize::json::Json;
 use std::convert;
 
@@ -31,16 +31,15 @@ pub enum ImageFormat {
 }
 
 fn mbtiles_connect(mbtiles_file: &Path) -> Result<Connection, MBTileError> {
-    Connection::open(mbtiles_file).to_mbtiles_result(format!("Can't connect to {:?}", mbtiles_file))
+    Ok(try_desc!(Connection::open(mbtiles_file), format!("Can't connect to {:?}", mbtiles_file)))
 }
 
 fn optimize_connection(connection: &Connection) -> Result<(), MBTileError> {
-    connection.execute_batch("
+    Ok(try_desc!(connection.execute_batch("
         PRAGMA synchronous=0;
         PRAGMA locking_mode=EXCLUSIVE;
         PRAGMA journal_mode=DELETE;
-        ")
-              .to_mbtiles_result("Cannot execute sqlite optimization query".to_owned())
+        "), "Cannot execute sqlite optimization query"))
 }
 
 fn optimize_database(connection: &Connection) -> Result<(), MBTileError> {
@@ -52,7 +51,7 @@ fn optimize_database(connection: &Connection) -> Result<(), MBTileError> {
 }
 
 fn mbtiles_setup(connection: &Connection) -> Result<(), MBTileError> {
-    connection.execute_batch("
+    Ok(try_desc!(connection.execute_batch("
         CREATE TABLE tiles (
                 zoom_level INTEGER,
                 tile_column INTEGER,
@@ -67,8 +66,7 @@ fn mbtiles_setup(connection: &Connection) -> Result<(), MBTileError> {
         CREATE UNIQUE INDEX name ON metadata (name);
         CREATE UNIQUE INDEX tile_index ON tiles
             (zoom_level, tile_column, tile_row);
-    ")
-              .to_mbtiles_result("Can't create schema".to_owned())
+    "), "Can't create schema"))
 }
 
 fn is_visible(entry: &DirEntry) -> bool {
@@ -99,7 +97,7 @@ fn parse_component(component: Component,
             let parts: Vec<&str> = s.split('.').collect();
             let filtered_extension = get_extension(image_format);
             if parts[1] == filtered_extension {
-                parts[0].parse::<u32>().to_mbtiles_result("".to_owned())
+                Ok(try_desc!(parts[0].parse::<u32>(), "Can't parse component in integer format"))
             } else {
                 Err(MBTileError {
                     message: format!("The filtered extention {} is different than the path's \
@@ -110,7 +108,7 @@ fn parse_component(component: Component,
                 })
             }
         } else {
-            s.parse::<u32>().to_mbtiles_result("".to_owned())
+            Ok(try_desc!(s.parse::<u32>(), "Can't parse component in integer format"))
         }
     } else {
         Err(MBTileError {
@@ -207,13 +205,12 @@ fn insert_image_sqlite(image_path: &Path,
     let mut image_file = try_desc!(File::open(image_path),
                                   format!("Can't open {:?}", image_path));
     let mut buffer = Vec::new();
-    try!(image_file.read_to_end(&mut buffer)
-                   .to_mbtiles_result(format!("Can't read file {:?}", image_path)));
-    try!(connection.execute("insert into tiles (zoom_level,
+    try_desc!(image_file.read_to_end(&mut buffer), format!("Can't read file {:?}", image_path));
+    try_desc!(connection.execute("insert into tiles (zoom_level,
                     tile_column, tile_row, tile_data) values
                     ($1, $2, $3, $4);",
-                            &[&(zoom as i64), &(column as i64), &(row as i64), &buffer])
-                   .to_mbtiles_result(format!("Can't insert {:?}", image_path)));
+                            &[&(zoom as i64), &(column as i64), &(row as i64), &buffer]),
+                   format!("Can't insert {:?}", image_path));
     Ok(())
 }
 
