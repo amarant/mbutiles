@@ -149,6 +149,7 @@ pub fn import(input: &Path,
                         flag_image_format,
                         flag_grid_callback,
                         &connection));
+    debug!("tiles (and grids) inserted.");
     try!(optimize_database(&connection));
     Ok(())
 }
