@@ -155,7 +155,7 @@ pub fn import(input: &Path,
 }
 
 fn flip_y(zoom: u32, y: u32) -> u32 {
-    2u32.pow(zoom - 1) - y
+    2u32.pow(zoom) -1 - y
 }
 
 fn walk_dir_image(input: &Path,
