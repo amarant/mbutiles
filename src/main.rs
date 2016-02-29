@@ -1,13 +1,14 @@
 #![feature(plugin)]
 #![plugin(clippy)]
 #![feature(trace_macros, log_syntax)]
+#[warn(unused_variable)]
 
 extern crate rustc_serialize;
 extern crate docopt;
 extern crate rusqlite;
 extern crate walkdir;
 extern crate regex;
-#[macro_use(log, info, debug, error)]
+#[macro_use(log, info, debug, error, warn)]
 extern crate log;
 extern crate stdio_logger;
 
@@ -37,9 +38,11 @@ Options:
  other options are \"tms\" which is also z/x/y but uses a flipped y coordinate,\
  and \"wms\" which replicates the MapServer WMS TileCache directory structure\
  \"z/000/000/x/000/000/y.png\". [default: xyz]
-  --image-format=<format>     The format of the image tiles, either png, jpg, webp or pbf.
+  --image-format=<format>     The format of the image tiles, either png, jpg, webp or pbf.\
+ [default: png]
   --grid-callback=<callback>  Option to control JSONP callback for UTFGrid tiles.\
- If grids are not used as JSONP, you can remove callbacks specifying --grid_callback=\"\".
+ If grids are not used as JSONP, you can remove callbacks specifying --grid_callback=\"\".\
+ [default: grid]
 
  Commands:
     import
@@ -52,8 +55,8 @@ struct Args {
     arg_command: Command,
     flag_verbose: bool,
     flag_scheme: Scheme,
-    flag_image_format: Option<ImageFormat>,
-    flag_grid_callback: Option<String>,
+    flag_image_format: ImageFormat,
+    flag_grid_callback: String,
     arg_input: String,
     arg_output: Option<String>,
 }
