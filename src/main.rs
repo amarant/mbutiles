@@ -1,7 +1,7 @@
 #![feature(plugin)]
 #![plugin(clippy)]
 #![feature(trace_macros, log_syntax)]
-#[warn(unused_variable)]
+//#[warn(unused_variable)]
 
 extern crate rustc_serialize;
 extern crate docopt;
