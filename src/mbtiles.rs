@@ -155,7 +155,7 @@ pub fn import(input: &Path,
 }
 
 fn flip_y(zoom: u32, y: u32) -> u32 {
-    2u32.pow(zoom) -1 - y
+    2u32.pow(zoom) - 1 - y
 }
 
 fn walk_dir_image(input: &Path,
@@ -249,7 +249,7 @@ fn parse_image_filename(component: Component,
                         -> Result<u32, MBTileError> {
     let mut radix = 10u32;
     let mut x_string = try!(parse_comp(component));
-    let mut x_part: String; //espace E0506 for s
+    let mut x_part: String; //escape E0506 for s
     {
         let parts: Vec<&str> = x_string.split('.').collect();
         let filtered_extension = get_extension(image_format);
@@ -272,6 +272,18 @@ fn parse_image_filename(component: Component,
     x_string = x_part;
     Ok(try_desc!(u32::from_str_radix(x_string.as_str(), radix),
                  "Can't parse component in integer format"))
+}
+
+fn insert_grid_json(connection: &Connection, grid_path: &Path) -> Result<(), MBTileError> {
+    let mut grid_file = try_desc!(File::open(grid_path), format!("Can't open {:?}", grid_path));
+    let mut buffer = Vec::new();
+    try_desc!(grid_file.read_to_end(&mut buffer),
+              format!("Can't read file {:?}", grid_path));
+    /* let re = regex!(r"[\w\s=+-\/]+\(({(.|\n)*})\);?");
+    for capture in re.captures(buffer) {
+        buffer = capture;
+    }*/
+    Ok(())
 }
 
 fn insert_image_sqlite(image_path: &Path,
