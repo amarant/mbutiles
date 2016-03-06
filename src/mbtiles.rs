@@ -2,12 +2,13 @@ use rusqlite::Connection;
 use std::iter::Iterator;
 use walkdir::{DirEntry, WalkDir, WalkDirIterator};
 use std::path::{Component, Path};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::prelude::*;
 use mbtile_error::{InnerError, MBTileError};
 use rustc_serialize::json::Json;
 use std::convert;
 use std::fmt;
+use std::collections::BTreeMap;
 
 #[derive(RustcDecodable, Debug)]
 pub enum Command {
@@ -135,10 +136,7 @@ pub fn import(input: &Path,
     info!("Importing disk to MBTiles");
     debug!("{:?} --> {:?}", &input, &output);
     if !input.is_dir() {
-        return Err(MBTileError {
-            message: "Can only import from a directory".to_owned(),
-            inner_error: InnerError::None,
-        });
+        return Err(MBTileError::new_static("Can only import from a directory"));
     }
     let connection = try!(mbtiles_connect(output));
     try!(optimize_connection(&connection));
@@ -207,16 +205,11 @@ fn walk_dir_image(input: &Path,
 fn parse_comp(component: Component) -> Result<String, MBTileError> {
     if let Component::Normal(os_str) = component {
         os_str.to_str()
-              .ok_or(MBTileError {
-                  message: format!("Unvalid unicode path: {:?}", os_str),
-                  inner_error: InnerError::None,
-              })
+              .ok_or(MBTileError::new(
+                  format!("Unvalid unicode path: {:?}", os_str)))
               .map(|s| s.to_owned())
     } else {
-        Err(MBTileError {
-            message: format!("Can't read path component {:?}", component),
-            inner_error: InnerError::None,
-        })
+        Err(MBTileError::new(format!("Can't read path component {:?}", component)))
     }
 }
 
@@ -256,13 +249,10 @@ fn parse_image_filename(component: Component,
         if parts[1] == filtered_extension {
             x_part = parts[0].to_owned();
         } else {
-            return Err(MBTileError {
-                message: format!("The filtered extention {} is different than the path's \
+            return Err(MBTileError::new(format!("The filtered extention {} is different than the path's \
                          extention {}",
-                                 filtered_extension,
-                                 parts[1]),
-                inner_error: InnerError::None,
-            });
+                                                filtered_extension,
+                                                parts[1])));
         }
         if let Scheme::Ags = flag_scheme {
             x_part = x_string.replace("C", "");
@@ -279,10 +269,10 @@ fn insert_grid_json(connection: &Connection, grid_path: &Path) -> Result<(), MBT
     let mut buffer = Vec::new();
     try_desc!(grid_file.read_to_end(&mut buffer),
               format!("Can't read file {:?}", grid_path));
-    /* let re = regex!(r"[\w\s=+-\/]+\(({(.|\n)*})\);?");
-    for capture in re.captures(buffer) {
-        buffer = capture;
-    }*/
+    // let re = regex!(r"[\w\s=+-\/]+\(({(.|\n)*})\);?");
+    // for capture in re.captures(buffer) {
+    // buffer = capture;
+    // }
     Ok(())
 }
 
@@ -306,15 +296,44 @@ fn insert_image_sqlite(image_path: &Path,
 }
 
 pub fn export(input: String,
-              output: Option<String>,
+              opt_output: Option<String>,
               flag_scheme: Scheme,
               flag_image_format: ImageFormat,
-              flag_grid_callback: String) {
+              flag_grid_callback: String)
+              -> Result<(), MBTileError> {
     let input_path = Path::new(&input);
-    if input_path.is_file() {
-    } else {
+    if !input_path.is_file() {
         error!("Can only export from a file")
     }
+    let output =
+        try!(opt_output.or_else(|| {
+                           input_path.file_stem()
+                                     .and_then(|stem| stem.to_str())
+                                     .map(|stem_str| stem_str.to_owned())
+                       })
+                       .ok_or(MBTileError::new_static("Cannot identify an output directory")));
+    debug!("Exporting MBTiles to disk");
+    debug!("{:?} --> {:?}", &input, &output);
+    let output_path = Path::new(&output);
+    if output_path.exists() {
+        return Err(MBTileError::new_static("Directory already exists"));
+    }
+    try_desc!(fs::create_dir_all(&output_path),
+              "Can't create the output directory");
+    let connection = try!(mbtiles_connect(&input_path));
+    let mut metadata_statement = try!(connection.prepare("select name, value from metadata;"));
+    let metadata_rows = try!(metadata_statement.query(&[]));
+    let mut metadata_map: BTreeMap<String, Json> = BTreeMap::new();
+    for res_row in metadata_rows {
+        let row = try!(res_row);
+        metadata_map.insert(row.get(0), Json::from_str(&row.get::<String>(1)).unwrap());
+    }
+    let json_obj = Json::Object(metadata_map);
+    let json_str = json_obj.to_string();
+    let metadata_path = output_path.join("metadata.json");
+    let mut metadata_file = try_desc!(File::create(metadata_path), "Can't create metadata file");
+    try_desc!(metadata_file.write(json_str.as_bytes()), "Can't write metadata file");
+    Ok(())
 }
 
 pub fn metadata(input: String,

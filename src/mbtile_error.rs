@@ -14,13 +14,29 @@ pub enum InnerError {
 }
 
 pub struct MBTileError {
-    pub message: String,
+    pub message: Option<String>,
     pub inner_error: InnerError,
+}
+
+impl MBTileError {
+    pub fn new_static(message: &'static str) -> MBTileError {
+        MBTileError {
+            message: Some(message.to_owned()),
+            inner_error: InnerError::None,
+        }
+    }
+
+    pub fn new(message: String) -> MBTileError {
+        MBTileError {
+            message: Some(message),
+            inner_error: InnerError::None,
+        }
+    }
 }
 
 impl Display for MBTileError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}{}", self.message, self.inner_error)
+        write!(f, "{:?}{}", self.message, self.inner_error)
     }
 }
 
@@ -40,26 +56,38 @@ macro_rules! try_desc {
     });
 }
 
-macro_rules! from_MBTileError {
+macro_rules! MBTileError_from_Tuple{
     ($source_error:ty, $message_type:ty) => (
         impl convert::From<($source_error, $message_type)> for MBTileError {
             fn from((kind, message): ($source_error, $message_type)) -> MBTileError {
-                MBTileError { message: message.to_owned(), inner_error: convert::From::from(kind) }
+                MBTileError { message: Some(message.to_owned()), inner_error: convert::From::from(kind) }
             }
         }
     )
 }
 
-from_MBTileError!(io::Error, String);
-from_MBTileError!(io::Error, &'static str);
-from_MBTileError!(walkdir::Error, String);
-from_MBTileError!(walkdir::Error, &'static str);
-from_MBTileError!(rusqlite::Error, String);
-from_MBTileError!(rusqlite::Error, &'static str);
-from_MBTileError!(num::ParseIntError, String);
-from_MBTileError!(num::ParseIntError, &'static str);
+MBTileError_from_Tuple!(io::Error, String);
+MBTileError_from_Tuple!(io::Error, &'static str);
+MBTileError_from_Tuple!(walkdir::Error, String);
+MBTileError_from_Tuple!(walkdir::Error, &'static str);
+MBTileError_from_Tuple!(rusqlite::Error, String);
+MBTileError_from_Tuple!(rusqlite::Error, &'static str);
+MBTileError_from_Tuple!(num::ParseIntError, String);
+MBTileError_from_Tuple!(num::ParseIntError, &'static str);
 
-macro_rules! from_InnerError {
+macro_rules! MBTileError_from_Error {
+    ($source_error:ty) => (
+        impl convert::From<$source_error> for MBTileError {
+            fn from(kind: $source_error) -> MBTileError {
+                MBTileError { message: None, inner_error: convert::From::from(kind) }
+            }
+        }
+    )
+}
+
+MBTileError_from_Error!(rusqlite::Error);
+
+macro_rules! InnerError_from_Error {
     ($source_error:ty, $selector:ident) => (
         impl convert::From<($source_error)> for InnerError {
             fn from(error: $source_error) -> InnerError {
@@ -69,10 +97,10 @@ macro_rules! from_InnerError {
     )
 }
 
-from_InnerError!(io::Error, IO);
-from_InnerError!(walkdir::Error, WalkDir);
-from_InnerError!(rusqlite::Error, Rusqlite);
-from_InnerError!(num::ParseIntError, ParseInt);
+InnerError_from_Error!(io::Error, IO);
+InnerError_from_Error!(walkdir::Error, WalkDir);
+InnerError_from_Error!(rusqlite::Error, Rusqlite);
+InnerError_from_Error!(num::ParseIntError, ParseInt);
 
 impl Display for InnerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
