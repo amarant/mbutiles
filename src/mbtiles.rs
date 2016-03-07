@@ -205,8 +205,7 @@ fn walk_dir_image(input: &Path,
 fn parse_comp(component: Component) -> Result<String, MBTileError> {
     if let Component::Normal(os_str) = component {
         os_str.to_str()
-              .ok_or(MBTileError::new(
-                  format!("Unvalid unicode path: {:?}", os_str)))
+              .ok_or(MBTileError::new(format!("Unvalid unicode path: {:?}", os_str)))
               .map(|s| s.to_owned())
     } else {
         Err(MBTileError::new(format!("Can't read path component {:?}", component)))
@@ -305,8 +304,7 @@ pub fn export(input: String,
     if !input_path.is_file() {
         error!("Can only export from a file")
     }
-    let output =
-        try!(opt_output.or_else(|| {
+    let output = try!(opt_output.or_else(|| {
                            input_path.file_stem()
                                      .and_then(|stem| stem.to_str())
                                      .map(|stem_str| stem_str.to_owned())
@@ -332,7 +330,52 @@ pub fn export(input: String,
     let json_str = json_obj.to_string();
     let metadata_path = output_path.join("metadata.json");
     let mut metadata_file = try_desc!(File::create(metadata_path), "Can't create metadata file");
-    try_desc!(metadata_file.write(json_str.as_bytes()), "Can't write metadata file");
+    try_desc!(metadata_file.write(json_str.as_bytes()),
+              "Can't write metadata file");
+    let mut zoom_level_count_statement =
+        try!(connection.prepare("select count(zoom_level) from tiles;"));
+    let mut zoom_level_count_rows = try!(zoom_level_count_statement.query(&[]));
+    let zoom_level_count_row_res = try!(zoom_level_count_rows.next()
+                                  .ok_or(MBTileError::new_static("Can't get zoom level")));
+    let zoom_level_count_row = try_desc!(zoom_level_count_row_res, "Can't get zoom level");
+    let zoom_level_count: i32 = zoom_level_count_row.get::<i32>(0);
+
+    let mut tiles_statement =
+        try!(connection.prepare("select zoom_level, tile_column, tile_row, tile_data from tiles;"));
+    let mut tiles_rows = try!(tiles_statement.query(&[]));
+    for tile_res in tiles_rows {
+        let tile = try!(tile_res);
+        let (z, x, mut y): (u32, u32, u32) = (tile.get::<i32>(0) as u32,
+                                              tile.get::<i32>(1) as u32,
+                                              tile.get::<i32>(2) as u32);
+        let tile_dir = match flag_scheme {
+            Scheme::Xyz => {
+                y = flip_y(z, y as u32);
+                output_path.join(z.to_string()).join(x.to_string())
+            }
+            Scheme::Wms => {
+                output_path.join(format!("{:02}", z))
+                           .join(format!("{:02}", z))
+                           .join(format!("{:03}", x as i32 / 1000000))
+                           .join(format!("{:03}", (x as i32 / 1000) % 1000))
+                           .join(format!("{:02}", x as i32 % 1000))
+                           .join(format!("{:02}", y as i32 / 1000000))
+                           .join(format!("{:02}", (y as i32 / 1000) % 1000))
+            }
+            _ => output_path.join(z.to_string()).join(x.to_string()),
+        };
+        try_desc!(fs::create_dir_all(&tile_dir),
+                  format!("Can't create the tile directory: {:?}", tile_dir));
+        let tile_path = match flag_scheme {
+            Scheme::Wms => {
+                tile_dir.join(format!("{:03}.{}",
+                                      y as i32 % 1000,
+                                      get_extension(flag_image_format)))
+            }
+            _ => tile_dir.join(format!("{}.{}", y, get_extension(flag_image_format))),
+        };
+    }
+
     Ok(())
 }
 

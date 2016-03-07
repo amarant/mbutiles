@@ -86,8 +86,10 @@ fn main() {
         },
         Command::Export =>
             // export mbtiles to a dir
-            export(args.arg_input, args.arg_output,
-                args.flag_scheme, args.flag_image_format, args.flag_grid_callback),
+            if let Err(err) = export(args.arg_input, args.arg_output,
+                args.flag_scheme, args.flag_image_format, args.flag_grid_callback) {
+                    error!("{:?}", err);
+                },
         Command::Metadata =>
             // dumps metadata
             metadata(args.arg_input, args.arg_output,
