@@ -88,6 +88,7 @@ macro_rules! MBTileError_from_Error {
 }
 
 MBTileError_from_Error!(rusqlite::Error);
+MBTileError_from_Error!(io::Error);
 
 macro_rules! InnerError_from_Error {
     ($source_error:ty, $selector:ident) => (

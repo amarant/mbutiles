@@ -328,13 +328,7 @@ pub fn export(input: String,
     let mut metadata_file = try!(File::create(metadata_path).desc("Can't create metadata file"));
     try!(metadata_file.write(json_str.as_bytes())
                       .desc("Can't write metadata file"));
-    let mut zoom_level_count_statement =
-        try!(connection.prepare("select count(zoom_level) from tiles;"));
-    let mut zoom_level_count_rows = try!(zoom_level_count_statement.query(&[]));
-    let zoom_level_count_row_res = try!(zoom_level_count_rows.next()
-                                  .ok_or(MBTileError::new_static("Can't get zoom level")));
-    let zoom_level_count_row = try!(zoom_level_count_row_res.desc("Can't get zoom level"));
-    let zoom_level_count: i32 = zoom_level_count_row.get::<i32>(0);
+    let zoom_level_count = get_count(&connection, "tiles");
 
     let mut tiles_statement =
         try!(connection.prepare("select zoom_level, tile_column, tile_row, tile_data from tiles;"));
@@ -370,9 +364,32 @@ pub fn export(input: String,
             }
             _ => tile_dir.join(format!("{}.{}", y, get_extension(flag_image_format))),
         };
+        let mut tile_file = try!(File::create(tile_path));
+        try!(tile_file.write_all(&tile.get::<Vec<u8>>(3)));
     }
 
+    let grids_zoom_level_count = get_count(&connection, "grids");
+
     Ok(())
+}
+
+fn get_count(connection: &Connection, table: &str) -> Result<i32, MBTileError> {
+    // connection.prepare("select count(zoom_level) from (?);")
+    // .as_ref()
+    // .and_then(|mut statement| {
+    // statement.query_and_then(&[&table], |row| Ok(row.get::<i32>(0)).as_ref())
+    // })
+    // .and_then(|mut rows| {
+    // rows.next()
+    // .ok_or(rusqlite::Error::QueryReturnedNoRows)
+    // })
+    // .and_then(|row_res| row_res)//.as_mut())
+    // .map_err(|err| *err)
+    // .desc("")
+    let mut statement = try!(connection.prepare("select count(zoom_level) from (?);"));
+    let mut rows = try!(statement.query_and_then(&[&table], |row| Ok(row.get::<i32>(0))));
+    try!(rows.next()
+             .ok_or(MBTileError::new(format!("Can't get {} zoom level", table))))
 }
 
 pub fn metadata(input: String,
