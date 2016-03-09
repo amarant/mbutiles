@@ -46,34 +46,36 @@ impl Debug for MBTileError {
     }
 }
 
-#[macro_export]
-macro_rules! try_desc {
-    ($expr:expr, $arg:expr) => (match $expr {
-        Ok(val) => val,
-        Err(err) => {
-            return Err(convert::From::from((err, $arg)));
-        }
-    });
+pub type MBTypeResult<U> = Result<U, MBTileError>;
+
+pub trait ToMBTileResult<U, E> {
+    fn desc<S: Into<String>>(self, description: S) -> Result<U, MBTileError>;
 }
 
-macro_rules! MBTileError_from_Tuple{
-    ($source_error:ty, $message_type:ty) => (
-        impl convert::From<($source_error, $message_type)> for MBTileError {
-            fn from((kind, message): ($source_error, $message_type)) -> MBTileError {
-                MBTileError { message: Some(message.to_owned()), inner_error: convert::From::from(kind) }
+
+macro_rules! to_MBTileResult {
+    ($($p:ty,)*) => (
+        $(
+            impl<U> ToMBTileResult<U, $p> for Result<U, $p>     {
+                fn desc<S: Into<String>>(self, description: S) -> MBTypeResult<U> {
+                    self.map_err(|err|
+                        MBTileError {
+                            message: Some(description.into()),
+                            inner_error: convert::From::from(err)
+                        }
+                    )
+                }
             }
-        }
+        )*
     )
 }
 
-MBTileError_from_Tuple!(io::Error, String);
-MBTileError_from_Tuple!(io::Error, &'static str);
-MBTileError_from_Tuple!(walkdir::Error, String);
-MBTileError_from_Tuple!(walkdir::Error, &'static str);
-MBTileError_from_Tuple!(rusqlite::Error, String);
-MBTileError_from_Tuple!(rusqlite::Error, &'static str);
-MBTileError_from_Tuple!(num::ParseIntError, String);
-MBTileError_from_Tuple!(num::ParseIntError, &'static str);
+to_MBTileResult!(
+    io::Error,
+    walkdir::Error,
+    rusqlite::Error,
+    num::ParseIntError,
+);
 
 macro_rules! MBTileError_from_Error {
     ($source_error:ty) => (
@@ -89,7 +91,7 @@ MBTileError_from_Error!(rusqlite::Error);
 
 macro_rules! InnerError_from_Error {
     ($source_error:ty, $selector:ident) => (
-        impl convert::From<($source_error)> for InnerError {
+        impl convert::From<$source_error> for InnerError {
             fn from(error: $source_error) -> InnerError {
                 InnerError::$selector(error)
             }
