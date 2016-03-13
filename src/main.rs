@@ -12,6 +12,7 @@ extern crate regex;
 #[macro_use(log, info, debug, error, warn)]
 extern crate log;
 extern crate stdio_logger;
+extern crate zip;
 
 use docopt::Docopt;
 use std::path::Path;

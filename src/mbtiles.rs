@@ -1,13 +1,17 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, Row};
 use std::iter::Iterator;
 use walkdir::{DirEntry, WalkDir, WalkDirIterator};
 use std::path::{Component, Path};
 use std::fs::{self, File};
 use std::io::prelude::*;
 use mbtile_error::{MBTileError, ToMBTileResult};
-use rustc_serialize::json::Json;
+use rustc_serialize::json::{self, Json};
 use std::fmt;
 use std::collections::BTreeMap;
+use zip::ZipArchive;
+use std::io::Cursor;
+use rusqlite::types::ToSql;
+use rusqlite::Statement;
 
 #[derive(RustcDecodable, Debug)]
 pub enum Command {
@@ -111,14 +115,15 @@ fn insert_metadata(input: &Path, connection: &Connection) -> Result<(), MBTileEr
     try!(metadata_file.read_to_string(&mut buffer)
                       .desc("metadata.json wasn't readable"));
     // TODO: use try! add error type
-    if let Ok(data) = Json::from_str(buffer.as_str()) {
-        if data.is_object() {
-            let obj = data.as_object().unwrap();
-            for (key, value) in obj.iter() {
-                try!(connection.execute("insert into metadata (name, value) values ($1, $2)",
-                                        &[key, &value.as_string().unwrap()])
-                               .desc("Can't insert medata in database"));
-            }
+    let data = try!(Json::from_str(buffer.as_str()));
+    if data.is_object() {
+        let obj = try!(data.as_object()
+                           .ok_or_else(|| MBTileError::new_static("metadata is not an object")));
+        for (key, value) in obj.iter() {
+            let value_str = try!(value.as_string().ok_or_else(|| MBTileError::new_static("metadata object has a non string value")));
+            try!(connection.execute("insert into metadata (name, value) values ($1, $2)",
+                                    &[key, &value_str])
+                           .desc("Can't insert medata in database"));
         }
     }
     info!("metadata.json was restored");
@@ -203,7 +208,7 @@ fn walk_dir_image(input: &Path,
 fn parse_comp(component: Component) -> Result<String, MBTileError> {
     if let Component::Normal(os_str) = component {
         os_str.to_str()
-              .ok_or(MBTileError::new(format!("Unvalid unicode path: {:?}", os_str)))
+              .ok_or_else(|| MBTileError::new(format!("Unvalid unicode path: {:?}", os_str)))
               .map(|s| s.to_owned())
     } else {
         Err(MBTileError::new(format!("Can't read path component {:?}", component)))
@@ -246,8 +251,8 @@ fn parse_image_filename(component: Component,
         if parts[1] == filtered_extension {
             x_part = parts[0].to_owned();
         } else {
-            return Err(MBTileError::new(format!("The filtered extention {} is different than the path's \
-                         extention {}",
+            return Err(MBTileError::new(format!("The filtered extention {} \
+is different than the path's extention {}",
                                                 filtered_extension,
                                                 parts[1])));
         }
@@ -291,6 +296,17 @@ fn insert_image_sqlite(image_path: &Path,
     Ok(())
 }
 
+fn query_json(statement: &mut Statement,
+              params: &[&ToSql])
+              -> Result<BTreeMap<String, Json>, MBTileError> {
+    let rows = try!(statement.query_map(&params, |row| {
+        (row.get::<String>(0), Json::String(row.get::<String>(1)))
+    }));
+
+    let data: BTreeMap<_, _> = try!(rows.collect());
+    Ok(data)
+}
+
 pub fn export(input: String,
               opt_output: Option<String>,
               flag_scheme: Scheme,
@@ -316,80 +332,144 @@ pub fn export(input: String,
     try!(fs::create_dir_all(&output_path).desc("Can't create the output directory"));
     let connection = try!(mbtiles_connect(&input_path));
     let mut metadata_statement = try!(connection.prepare("select name, value from metadata;"));
-    let metadata_rows = try!(metadata_statement.query(&[]));
-    let mut metadata_map: BTreeMap<String, Json> = BTreeMap::new();
-    for res_row in metadata_rows {
-        let row = try!(res_row);
-        metadata_map.insert(row.get(0), Json::from_str(&row.get::<String>(1)).unwrap());
-    }
+    let metadata_map = try!(query_json(&mut metadata_statement, &[]));
+    // let metadata_rows = try!(metadata_statement.query_map(&[], |metadata_row| {
+    // let value = metadata_row.get::<String>(1);
+    // let value_json = try!(Json::String(&value).desc(value));
+    // (metadata_row.get::<String>(0), value_json)
+    // }));
+    // let mut metadata_map: BTreeMap<String, Json> = metadata_rows.collect();
+    // for res_row in metadata_rows {
+    // let row = try!(res_row);
+    // let value = row.get::<String>(1);
+    // let value_json = try!(Json::from_str(&value).desc(value));
+    // metadata_map.insert(row.get(0), value_json);
+    // }
     let json_obj = Json::Object(metadata_map);
     let json_str = json_obj.to_string();
     let metadata_path = output_path.join("metadata.json");
     let mut metadata_file = try!(File::create(metadata_path).desc("Can't create metadata file"));
     try!(metadata_file.write(json_str.as_bytes())
                       .desc("Can't write metadata file"));
-    let zoom_level_count = get_count(&connection, "tiles");
+    // TODO show pregression:
+    // let zoom_level_count = get_count(&connection, "tiles");
 
     let mut tiles_statement =
         try!(connection.prepare("select zoom_level, tile_column, tile_row, tile_data from tiles;"));
     let tiles_rows = try!(tiles_statement.query(&[]));
     for tile_res in tiles_rows {
         let tile = try!(tile_res);
-        let (z, x, mut y): (u32, u32, u32) = (tile.get::<i32>(0) as u32,
-                                              tile.get::<i32>(1) as u32,
-                                              tile.get::<i32>(2) as u32);
-        let tile_dir = match flag_scheme {
-            Scheme::Xyz => {
-                y = flip_y(z, y as u32);
-                output_path.join(z.to_string()).join(x.to_string())
-            }
-            Scheme::Wms => {
-                output_path.join(format!("{:02}", z))
-                           .join(format!("{:02}", z))
-                           .join(format!("{:03}", x as i32 / 1000000))
-                           .join(format!("{:03}", (x as i32 / 1000) % 1000))
-                           .join(format!("{:02}", x as i32 % 1000))
-                           .join(format!("{:02}", y as i32 / 1000000))
-                           .join(format!("{:02}", (y as i32 / 1000) % 1000))
-            }
-            _ => output_path.join(z.to_string()).join(x.to_string()),
-        };
-        try!(fs::create_dir_all(&tile_dir)
-                 .desc(format!("Can't create the tile directory: {:?}", tile_dir)));
-        let tile_path = match flag_scheme {
-            Scheme::Wms => {
-                tile_dir.join(format!("{:03}.{}",
-                                      y as i32 % 1000,
-                                      get_extension(flag_image_format)))
-            }
-            _ => tile_dir.join(format!("{}.{}", y, get_extension(flag_image_format))),
-        };
-        let mut tile_file = try!(File::create(tile_path));
-        try!(tile_file.write_all(&tile.get::<Vec<u8>>(3)));
+        try!(export_tile(&tile, output_path, flag_scheme, flag_image_format));
     }
+    try!(export_grid(&connection, flag_scheme, &output_path, flag_grid_callback));
+    Ok(())
+}
 
-    let grids_zoom_level_count = get_count(&connection, "grids");
-
+fn export_tile(tile: &Row,
+               output_path: &Path,
+               flag_scheme: Scheme,
+               flag_image_format: ImageFormat)
+               -> Result<(), MBTileError> {
+    let (z, x, mut y): (u32, u32, u32) = (tile.get::<i32>(0) as u32,
+                                          tile.get::<i32>(1) as u32,
+                                          tile.get::<i32>(2) as u32);
+    let tile_dir = match flag_scheme {
+        Scheme::Xyz => {
+            y = flip_y(z, y as u32);
+            output_path.join(z.to_string()).join(x.to_string())
+        }
+        Scheme::Wms => {
+            output_path.join(format!("{:02}", z))
+                       .join(format!("{:02}", z))
+                       .join(format!("{:03}", x as i32 / 1000000))
+                       .join(format!("{:03}", (x as i32 / 1000) % 1000))
+                       .join(format!("{:02}", x as i32 % 1000))
+                       .join(format!("{:02}", y as i32 / 1000000))
+                       .join(format!("{:02}", (y as i32 / 1000) % 1000))
+        }
+        _ => output_path.join(z.to_string()).join(x.to_string()),
+    };
+    try!(fs::create_dir_all(&tile_dir)
+             .desc(format!("Can't create the tile directory: {:?}", tile_dir)));
+    let tile_path = match flag_scheme {
+        Scheme::Wms => {
+            tile_dir.join(format!("{:03}.{}",
+                                  y as i32 % 1000,
+                                  get_extension(flag_image_format)))
+        }
+        _ => tile_dir.join(format!("{}.{}", y, get_extension(flag_image_format))),
+    };
+    let mut tile_file = try!(File::create(tile_path));
+    try!(tile_file.write_all(&tile.get::<Vec<u8>>(3)));
     Ok(())
 }
 
 fn get_count(connection: &Connection, table: &str) -> Result<i32, MBTileError> {
-    // connection.prepare("select count(zoom_level) from (?);")
-    // .as_ref()
-    // .and_then(|mut statement| {
-    // statement.query_and_then(&[&table], |row| Ok(row.get::<i32>(0)).as_ref())
-    // })
-    // .and_then(|mut rows| {
-    // rows.next()
-    // .ok_or(rusqlite::Error::QueryReturnedNoRows)
-    // })
-    // .and_then(|row_res| row_res)//.as_mut())
-    // .map_err(|err| *err)
-    // .desc("")
-    let mut statement = try!(connection.prepare("select count(zoom_level) from (?);"));
-    let mut rows = try!(statement.query_and_then(&[&table], |row| Ok(row.get::<i32>(0))));
-    try!(rows.next()
-             .ok_or(MBTileError::new(format!("Can't get {} zoom level", table))))
+    connection.query_row_safe("select count(zoom_level) from (?);",
+                              &[&table],
+                              |row| row.get::<i32>(0))
+              .desc(format!("Can't get {} zoom level", table))
+}
+
+fn export_grid(connection: &Connection,
+               flag_scheme: Scheme,
+               output_path: &Path,
+               flag_grid_callback: String)
+               -> Result<(), MBTileError> {
+    // TODO show pregression:
+    // let grids_zoom_level_count = get_count(&connection, "grids");
+    let mut grids_statement =
+        try!(connection.prepare("select zoom_level, tile_column, tile_row, grid from grids;"));
+    let grids_rows = try!(grids_statement.query(&[]));
+    for grid_row in grids_rows {
+        let grid = try!(grid_row);
+        let (zoom_level, tile_column, mut y): (i32, i32, i32) = (grid.get(0),
+                                                                 grid.get(1),
+                                                                 grid.get(2));
+        if let Scheme::Xyz = flag_scheme {
+            y = flip_y(zoom_level as u32, y as u32) as i32;
+        }
+        let grid_dir = output_path.join(zoom_level.to_string()).join(tile_column.to_string());
+        try!(fs::create_dir_all(&grid_dir)
+                 .desc(format!("Can't create the directory: {:?}", grid_dir)));
+        let grid_zip = grid.get::<Vec<u8>>(3);
+        let grid_cursor = Cursor::new(grid_zip);
+        let mut zip_archive = try!(ZipArchive::new(grid_cursor));
+        let mut zip_file = try!(zip_archive.by_index(0));
+        let mut unzipped_grid = String::new();
+        try!(zip_file.read_to_string(&mut unzipped_grid));
+        let grid_json = try!(Json::from_str(unzipped_grid.as_str()));
+
+        let mut grid_data_statement = try!(connection.prepare("select key_name, key_json FROM
+            grid_data WHERE
+            zoom_level = (?) and
+            tile_column = (?) and
+            tile_row = (?);"));
+        // let grid_data_rows = try!(grid_data_statement.query_map(&[&zoom_level, &tile_column, &y],
+        // |grid_data_row| {
+        // (grid_data_row.get::<String>(0),
+        // Json::String(grid_data_row.get::<String>(1)))
+        // }));
+        //
+        // let data: BTreeMap<_, _> = try!(grid_data_rows.collect());
+        let data = try!(query_json(&mut grid_data_statement, &[&zoom_level, &tile_column, &y]));
+
+        let grid_object = if let Json::Object(mut grid_object) = grid_json {
+            grid_object.insert("data".to_owned(), Json::Object(data));
+            grid_object
+        } else {
+            return Err(MBTileError::new_static("grid is not an object"));
+        };
+        let grid_file_path = grid_dir.join(format!("{}.grid.json", y));
+        let mut grid_file = try!(File::create(grid_file_path));
+        let grid_json = try!(json::encode(&grid_object));
+        let dump = match flag_grid_callback.as_str() {
+            "" | "false" | "null" => grid_json,
+            callback => format!("{}({})", callback, grid_json),
+        };
+        try!(grid_file.write_all(dump.as_bytes()));
+    }
+    Ok(())
 }
 
 pub fn metadata(input: String,
