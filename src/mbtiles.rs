@@ -333,18 +333,6 @@ pub fn export(input: String,
     let connection = try!(mbtiles_connect(&input_path));
     let mut metadata_statement = try!(connection.prepare("select name, value from metadata;"));
     let metadata_map = try!(query_json(&mut metadata_statement, &[]));
-    // let metadata_rows = try!(metadata_statement.query_map(&[], |metadata_row| {
-    // let value = metadata_row.get::<String>(1);
-    // let value_json = try!(Json::String(&value).desc(value));
-    // (metadata_row.get::<String>(0), value_json)
-    // }));
-    // let mut metadata_map: BTreeMap<String, Json> = metadata_rows.collect();
-    // for res_row in metadata_rows {
-    // let row = try!(res_row);
-    // let value = row.get::<String>(1);
-    // let value_json = try!(Json::from_str(&value).desc(value));
-    // metadata_map.insert(row.get(0), value_json);
-    // }
     let json_obj = Json::Object(metadata_map);
     let json_str = json_obj.to_string();
     let metadata_path = output_path.join("metadata.json");
@@ -445,13 +433,6 @@ fn export_grid(connection: &Connection,
             zoom_level = (?) and
             tile_column = (?) and
             tile_row = (?);"));
-        // let grid_data_rows = try!(grid_data_statement.query_map(&[&zoom_level, &tile_column, &y],
-        // |grid_data_row| {
-        // (grid_data_row.get::<String>(0),
-        // Json::String(grid_data_row.get::<String>(1)))
-        // }));
-        //
-        // let data: BTreeMap<_, _> = try!(grid_data_rows.collect());
         let data = try!(query_json(&mut grid_data_statement, &[&zoom_level, &tile_column, &y]));
 
         let grid_object = if let Json::Object(mut grid_object) = grid_json {
