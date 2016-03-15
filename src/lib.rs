@@ -17,4 +17,4 @@ extern crate zip;
 mod mbtile_error;
 mod mbtiles;
 
-pub use mbtiles::{export, import};
+pub use mbtiles::{ImageFormat, Scheme, export, import};

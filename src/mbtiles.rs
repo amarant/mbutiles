@@ -1,7 +1,7 @@
 use rusqlite::{Connection, Row};
 use std::iter::Iterator;
 use walkdir::{DirEntry, WalkDir, WalkDirIterator};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::fs::{self, File};
 use std::io::prelude::*;
 use mbtile_error::{MBTileError, ToMBTileResult};
@@ -307,24 +307,26 @@ fn query_json(statement: &mut Statement,
     Ok(data)
 }
 
-pub fn export(input: String,
-              opt_output: Option<String>,
-              flag_scheme: Scheme,
-              flag_image_format: ImageFormat,
-              flag_grid_callback: String)
-              -> Result<(), MBTileError> {
-    let input_path = Path::new(&input);
+pub fn export<P: AsRef<Path>>(input: P,
+                              opt_output: Option<P>,
+                              flag_scheme: Scheme,
+                              flag_image_format: ImageFormat,
+                              flag_grid_callback: String)
+                              -> Result<(), MBTileError> {
+    let input_path: PathBuf = input.as_ref().to_path_buf();
     if !input_path.is_file() {
         error!("Can only export from a file")
     }
-    let output = try!(opt_output.or_else(|| {
-                           input_path.file_stem()
-                                     .and_then(|stem| stem.to_str())
-                                     .map(|stem_str| stem_str.to_owned())
-                       })
-                       .ok_or(MBTileError::new_static("Cannot identify an output directory")));
+    let output: PathBuf = try!(opt_output
+        .map(|p| p.as_ref().to_path_buf())
+        .or_else(|| {
+           input_path.file_stem()
+                     .and_then(|stem| Some(PathBuf::from(stem)))
+                     //.map(|stem_str| stem_str.to_owned())
+       })
+       .ok_or(MBTileError::new_static("Cannot identify an output directory")));
     debug!("Exporting MBTiles to disk");
-    debug!("{:?} --> {:?}", &input, &output);
+    debug!("{:?} --> {:?}", &input_path, &output);
     let output_path = Path::new(&output);
     if output_path.exists() {
         return Err(MBTileError::new_static("Directory already exists"));
