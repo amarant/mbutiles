@@ -8,10 +8,11 @@ use mbtile_error::{MBTileError, ToMBTileResult};
 use rustc_serialize::json::{self, Json};
 use std::fmt;
 use std::collections::BTreeMap;
-use zip::ZipArchive;
-use std::io::Cursor;
 use rusqlite::types::ToSql;
 use rusqlite::Statement;
+use flate2::read::ZlibDecoder;
+use std::str::from_utf8;
+use std::io::Cursor;
 
 #[derive(RustcDecodable, Debug)]
 pub enum Command {
@@ -104,7 +105,7 @@ fn get_extension(image_format: ImageFormat) -> &'static str {
     }
 }
 
-fn insert_metadata(input: &Path, connection: &Connection) -> Result<(), MBTileError> {
+fn insert_metadata(input: &PathBuf, connection: &Connection) -> Result<(), MBTileError> {
     if input.is_file() {
         info!("metadata.json was not found");
         return Ok(());
@@ -130,22 +131,24 @@ fn insert_metadata(input: &Path, connection: &Connection) -> Result<(), MBTileEr
     Ok(())
 }
 
-pub fn import(input: &Path,
-              output: &Path,
-              flag_scheme: Scheme,
-              flag_image_format: ImageFormat,
-              flag_grid_callback: String)
-              -> Result<(), MBTileError> {
+pub fn import<P: AsRef<Path>>(input: P,
+                              output: P,
+                              flag_scheme: Scheme,
+                              flag_image_format: ImageFormat,
+                              flag_grid_callback: String)
+                              -> Result<(), MBTileError> {
     info!("Importing disk to MBTiles");
-    debug!("{:?} --> {:?}", &input, &output);
-    if !input.is_dir() {
+    let input_path: PathBuf = input.as_ref().to_path_buf();
+    let output_path: PathBuf = output.as_ref().to_path_buf();
+    debug!("{:?} --> {:?}", &input_path, &output_path);
+    if !input_path.is_dir() {
         return Err(MBTileError::new_static("Can only import from a directory"));
     }
-    let connection = try!(mbtiles_connect(output));
+    let connection = try!(mbtiles_connect(&output_path));
     try!(optimize_connection(&connection));
     try!(mbtiles_setup(&connection));
-    try!(insert_metadata(&input, &connection));
-    try!(walk_dir_image(&input,
+    try!(insert_metadata(&input_path, &connection));
+    try!(walk_dir_image(&input_path,
                         flag_scheme,
                         flag_image_format,
                         flag_grid_callback,
@@ -351,7 +354,7 @@ pub fn export<P: AsRef<Path>>(input: P,
         let tile = try!(tile_res);
         try!(export_tile(&tile, output_path, flag_scheme, flag_image_format));
     }
-    try!(export_grid(&connection, flag_scheme, &output_path, flag_grid_callback));
+    try!(export_grid(&connection, &output_path, flag_scheme, flag_grid_callback));
     Ok(())
 }
 
@@ -402,8 +405,8 @@ fn get_count(connection: &Connection, table: &str) -> Result<i32, MBTileError> {
 }
 
 fn export_grid(connection: &Connection,
-               flag_scheme: Scheme,
                output_path: &Path,
+               flag_scheme: Scheme,
                flag_grid_callback: String)
                -> Result<(), MBTileError> {
     // TODO show pregression:
@@ -424,11 +427,11 @@ fn export_grid(connection: &Connection,
                  .desc(format!("Can't create the directory: {:?}", grid_dir)));
         let grid_zip = grid.get::<Vec<u8>>(3);
         let grid_cursor = Cursor::new(grid_zip);
-        let mut zip_archive = try!(ZipArchive::new(grid_cursor));
-        let mut zip_file = try!(zip_archive.by_index(0));
+        let mut decoder = ZlibDecoder::new(grid_cursor);
         let mut unzipped_grid = String::new();
-        try!(zip_file.read_to_string(&mut unzipped_grid));
-        let grid_json = try!(Json::from_str(unzipped_grid.as_str()));
+        try!(decoder.read_to_string(&mut unzipped_grid));
+        let grid_json = try!(Json::from_str(unzipped_grid.as_str())
+                                 .desc(format!("Grid json: {}", unzipped_grid)));
 
         let mut grid_data_statement = try!(connection.prepare("select key_name, key_json FROM
             grid_data WHERE

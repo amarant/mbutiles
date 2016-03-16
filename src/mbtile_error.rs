@@ -4,7 +4,8 @@ use std::num;
 use walkdir;
 use std::fmt::{self, Debug, Display};
 use rustc_serialize::json;
-use zip::result;
+use flate2;
+use std::str;
 
 #[derive(Debug)]
 pub enum InnerError {
@@ -14,8 +15,9 @@ pub enum InnerError {
     ParseInt(num::ParseIntError),
     WalkDir(walkdir::Error),
     ParserError(json::ParserError),
-    ZipError(result::ZipError),
+    DataError(flate2::DataError),
     EncoderError(json::EncoderError),
+    Utf8Error(str::Utf8Error),
 }
 
 pub struct MBTileError {
@@ -85,8 +87,9 @@ to_MBTileResult!(
     rusqlite::Error,
     num::ParseIntError,
     json::ParserError,
-    result::ZipError,
+    flate2::DataError,
     json::EncoderError,
+    str::Utf8Error,
 );
 
 macro_rules! MBTileError_from_Error {
@@ -102,8 +105,9 @@ macro_rules! MBTileError_from_Error {
 MBTileError_from_Error!(rusqlite::Error);
 MBTileError_from_Error!(io::Error);
 MBTileError_from_Error!(json::ParserError);
-MBTileError_from_Error!(result::ZipError);
+MBTileError_from_Error!(flate2::DataError);
 MBTileError_from_Error!(json::EncoderError);
+MBTileError_from_Error!(str::Utf8Error);
 
 macro_rules! InnerError_from_Error {
     ($source_error:ty, $selector:ident) => (
@@ -120,8 +124,9 @@ InnerError_from_Error!(walkdir::Error, WalkDir);
 InnerError_from_Error!(rusqlite::Error, Rusqlite);
 InnerError_from_Error!(num::ParseIntError, ParseInt);
 InnerError_from_Error!(json::ParserError, ParserError);
-InnerError_from_Error!(result::ZipError, ZipError);
+InnerError_from_Error!(flate2::DataError, DataError);
 InnerError_from_Error!(json::EncoderError, EncoderError);
+InnerError_from_Error!(str::Utf8Error, Utf8Error);
 
 impl Display for InnerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -132,8 +137,9 @@ impl Display for InnerError {
             InnerError::ParseInt(ref err) => write!(f, ", Parse integer error: {}", err),
             InnerError::WalkDir(ref err) => write!(f, ", Directory Walker error: {}", err),
             InnerError::ParserError(ref err) => write!(f, ", Json parser error: {}", err),
-            InnerError::ZipError(ref err) => write!(f, ", Zip error: {}", err),
+            InnerError::DataError(ref err) => write!(f, ", Zip error: {}", err),
             InnerError::EncoderError(ref err) => write!(f, ", Json Encoder error: {}", err),
+            InnerError::Utf8Error(ref err) => write!(f, ", Utf8 error: {}", err),
         }
     }
 }
