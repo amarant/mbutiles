@@ -299,17 +299,6 @@ fn insert_image_sqlite(image_path: &Path,
     Ok(())
 }
 
-fn query_json(statement: &mut Statement,
-              params: &[&ToSql])
-              -> Result<BTreeMap<String, Json>, MBTileError> {
-    let rows = try!(statement.query_map(&params, |row| {
-        (row.get::<String>(0), Json::String(row.get::<String>(1)))
-    }));
-
-    let data: BTreeMap<_, _> = try!(rows.collect());
-    Ok(data)
-}
-
 pub fn export<P: AsRef<Path>>(input: P,
                               opt_output: Option<P>,
                               flag_scheme: Scheme,
@@ -337,7 +326,12 @@ pub fn export<P: AsRef<Path>>(input: P,
     try!(fs::create_dir_all(&output_path).desc("Can't create the output directory"));
     let connection = try!(mbtiles_connect(&input_path));
     let mut metadata_statement = try!(connection.prepare("select name, value from metadata;"));
-    let metadata_map = try!(query_json(&mut metadata_statement, &[]));
+
+    let metadata_statement_rows = try!(metadata_statement.query_map(&[], |row| {
+        (row.get::<String>(0), Json::String(row.get::<String>(1)))
+    }));
+    let metadata_map: BTreeMap<_, _> = try!(metadata_statement_rows.collect());
+
     let json_obj = Json::Object(metadata_map);
     let json_str = json_obj.to_string();
     let metadata_path = output_path.join("metadata.json");
@@ -438,7 +432,19 @@ fn export_grid(connection: &Connection,
             zoom_level = (?) and
             tile_column = (?) and
             tile_row = (?);"));
-        let data = try!(query_json(&mut grid_data_statement, &[&zoom_level, &tile_column, &y]));
+
+        let grid_data_rows = try!(grid_data_statement.query_map(&[&zoom_level, &tile_column, &y],
+                                                                |row| {
+                                                                    let json = row.get::<String>(1);
+                                                                    Json::from_str(json.as_str())
+                    .map(|res| (row.get::<String>(0), res))
+                    .desc(format!("Can't parse json: {}", json))
+                                                                }));
+        let data: BTreeMap<_, _> = try!(grid_data_rows.map(|res| {
+                                                          res.desc("")
+                                                             .and_then(|rr| rr)
+                                                      })
+                                                      .collect());
 
         let grid_object = if let Json::Object(mut grid_object) = grid_json {
             grid_object.insert("data".to_owned(), Json::Object(data));
