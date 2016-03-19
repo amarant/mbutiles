@@ -6,7 +6,7 @@ description = "MBUtiles is an utility in Rust, to generate MBTiles from tiles di
 homepage = "https://github.com/amarant/mbutiles"
 repository = "https://github.com/amarant/mbutiles.git"
 readme = "README.md"
-keywords = ["tiles", "mbtile", "mbtiles", "mbutil", "mbutiles", "geo", "gis"]
+keywords = ["mbtiles", "mbutil", "mbutiles", "geo", "gis"]
 license = "BSD-3-Clause"
 license-file = "LICENSE.md"
 
