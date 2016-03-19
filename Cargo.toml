@@ -2,6 +2,13 @@
 name = "mbutiles"
 version = "0.1.0"
 authors = ["Arnaud Marant <arnaudmarant@gmail.com>"]
+description = "MBUtiles is an utility in Rust, to generate MBTiles from tiles directories and extract tiles from MBTiles file"
+homepage = "https://github.com/amarant/mbutiles"
+repository = "https://github.com/amarant/mbutiles.git"
+readme = "README.md"
+keywords = ["tiles", "mbtile", "mbtiles", "mbutil", "mbutiles", "geo", "gis"]
+license = "BSD-3-Clause"
+license-file = "LICENSE.md"
 
 [dependencies]
 docopt = "0.6"
