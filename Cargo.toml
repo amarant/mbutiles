@@ -9,11 +9,9 @@ rustc-serialize = "0.3"
 rusqlite = "0.6.0"
 walkdir = "0.1"
 regex = "0.1"
-regex_macros = "0.1"
 stdio_logger = "0.1.1"
 log = "0.3"
 flate2 = "0.2"
-clippy = "*"
 
 [dev-dependencies]
 jlens = "0.0.1"
