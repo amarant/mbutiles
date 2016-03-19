@@ -82,7 +82,7 @@ fn main() {
             let output = args.arg_output.unwrap_or_else(
                 || format!("{}.mbtiles", input));
             if let Err(err) = import(&Path::new(&args.arg_input), &Path::new(&output),
-                args.flag_scheme, args.flag_image_format, args.flag_grid_callback) {
+                args.flag_scheme, args.flag_image_format) {
                 error!("{:?}", err);
             }
         },

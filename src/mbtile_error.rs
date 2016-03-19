@@ -6,6 +6,7 @@ use std::fmt::{self, Debug, Display};
 use rustc_serialize::json;
 use flate2;
 use std::str;
+use regex;
 
 #[derive(Debug)]
 pub enum InnerError {
@@ -18,6 +19,7 @@ pub enum InnerError {
     DataError(flate2::DataError),
     EncoderError(json::EncoderError),
     Utf8Error(str::Utf8Error),
+    Regex(regex::Error),
 }
 
 pub struct MBTileError {
@@ -90,6 +92,7 @@ to_MBTileResult!(
     flate2::DataError,
     json::EncoderError,
     str::Utf8Error,
+    regex::Error,
 );
 
 macro_rules! MBTileError_from_Error {
@@ -108,6 +111,7 @@ MBTileError_from_Error!(json::ParserError);
 MBTileError_from_Error!(flate2::DataError);
 MBTileError_from_Error!(json::EncoderError);
 MBTileError_from_Error!(str::Utf8Error);
+MBTileError_from_Error!(regex::Error);
 
 macro_rules! InnerError_from_Error {
     ($source_error:ty, $selector:ident) => (
@@ -127,6 +131,7 @@ InnerError_from_Error!(json::ParserError, ParserError);
 InnerError_from_Error!(flate2::DataError, DataError);
 InnerError_from_Error!(json::EncoderError, EncoderError);
 InnerError_from_Error!(str::Utf8Error, Utf8Error);
+InnerError_from_Error!(regex::Error, Regex);
 
 impl Display for InnerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -140,6 +145,7 @@ impl Display for InnerError {
             InnerError::DataError(ref err) => write!(f, ", Zip error: {}", err),
             InnerError::EncoderError(ref err) => write!(f, ", Json Encoder error: {}", err),
             InnerError::Utf8Error(ref err) => write!(f, ", Utf8 error: {}", err),
+            InnerError::Regex(ref err) => write!(f, ", regex error: {}", err),
         }
     }
 }

@@ -8,11 +8,11 @@ use mbtile_error::{MBTileError, ToMBTileResult};
 use rustc_serialize::json::{self, Json};
 use std::fmt;
 use std::collections::BTreeMap;
-use rusqlite::types::ToSql;
-use rusqlite::Statement;
 use flate2::read::ZlibDecoder;
-use std::str::from_utf8;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use std::io::Cursor;
+use regex::Regex;
 
 #[derive(RustcDecodable, Debug)]
 pub enum Command {
@@ -111,7 +111,7 @@ fn insert_metadata(input: &PathBuf, connection: &Connection) -> Result<(), MBTil
         return Ok(());
     }
     let mut metadata_file = try!(File::open(input.join("metadata.json"))
-                                     .desc("Can't open metadata.json"));
+                                     .desc(format!("Can't open metadata.json: {:?}", input)));
     let mut buffer = String::new();
     try!(metadata_file.read_to_string(&mut buffer)
                       .desc("metadata.json wasn't readable"));
@@ -134,8 +134,7 @@ fn insert_metadata(input: &PathBuf, connection: &Connection) -> Result<(), MBTil
 pub fn import<P: AsRef<Path>>(input: P,
                               output: P,
                               flag_scheme: Scheme,
-                              flag_image_format: ImageFormat,
-                              flag_grid_callback: String)
+                              flag_image_format: ImageFormat)
                               -> Result<(), MBTileError> {
     info!("Importing disk to MBTiles");
     let input_path: PathBuf = input.as_ref().to_path_buf();
@@ -148,11 +147,7 @@ pub fn import<P: AsRef<Path>>(input: P,
     try!(optimize_connection(&connection));
     try!(mbtiles_setup(&connection));
     try!(insert_metadata(&input_path, &connection));
-    try!(walk_dir_image(&input_path,
-                        flag_scheme,
-                        flag_image_format,
-                        flag_grid_callback,
-                        &connection));
+    try!(walk_dir_image(&input_path, flag_scheme, flag_image_format, &connection));
     debug!("tiles (and grids) inserted.");
     try!(optimize_database(&connection));
     Ok(())
@@ -165,7 +160,6 @@ fn flip_y(zoom: u32, y: u32) -> u32 {
 fn walk_dir_image(input: &Path,
                   flag_scheme: Scheme,
                   flag_image_format: ImageFormat,
-                  flag_grid_callback: String,
                   connection: &Connection)
                   -> Result<(), MBTileError> {
     let base_components_length = input.components().count();
@@ -189,16 +183,13 @@ fn walk_dir_image(input: &Path,
             parse_zoom_dir(end_comp[0], flag_scheme)
                 .and_then(|zoom| {
                     parse_image_dir(end_comp[1], flag_scheme).and_then(|image_dir| {
-                        parse_image_filename(end_comp[2], flag_scheme, flag_image_format)
-                            .and_then(|image_filename| {
-                                let (col, row) = match flag_scheme {
-                                    Scheme::Ags => (image_filename, flip_y(zoom, image_dir)),
-                                    Scheme::Xyz => (image_dir, flip_y(zoom, image_filename)),
-                                    _ => (image_dir, image_filename),
-                                };
-                                info!("Zoom: {}, Col: {}, Row {}", zoom, col, row);
-                                insert_image_sqlite(entry_path, zoom, col, row, &connection)
-                            })
+                        parse_filename_and_insert(end_comp[2],
+                                                  flag_scheme,
+                                                  flag_image_format,
+                                                  zoom,
+                                                  image_dir,
+                                                  &entry_path,
+                                                  &connection)
                     })
                 })
                 .unwrap_or_else(|err| error!("{}", err))
@@ -241,43 +232,100 @@ fn parse_image_dir(component: Component, flag_scheme: Scheme) -> Result<u32, MBT
                 .desc("Can't parse component in integer format")))
 }
 
-fn parse_image_filename(component: Component,
-                        flag_scheme: Scheme,
-                        image_format: ImageFormat)
-                        -> Result<u32, MBTileError> {
+fn parse_filename_and_insert(component: Component,
+                             flag_scheme: Scheme,
+                             image_format: ImageFormat,
+                             zoom: u32,
+                             image_dir: u32,
+                             entry_path: &Path,
+                             connection: &Connection)
+                             -> Result<(), MBTileError> {
+    let filename = try!(parse_comp(component));
+    let parts: Vec<&str> = filename.split('.').collect();
+
     let mut radix = 10u32;
-    let mut x_string = try!(parse_comp(component));
-    let mut x_part: String; //escape E0506 for s
-    {
-        let parts: Vec<&str> = x_string.split('.').collect();
-        let filtered_extension = get_extension(image_format);
-        if parts[1] == filtered_extension {
-            x_part = parts[0].to_owned();
-        } else {
-            return Err(MBTileError::new(format!("The filtered extention {} \
-is different than the path's extention {}",
-                                                filtered_extension,
-                                                parts[1])));
-        }
-        if let Scheme::Ags = flag_scheme {
-            x_part = x_string.replace("C", "");
-            radix = 16;
-        }
+    let mut stem_part = parts[0].to_owned();
+    if let Scheme::Ags = flag_scheme {
+        stem_part = stem_part.replace("C", "");
+        radix = 16;
     }
-    x_string = x_part;
-    Ok(try!(u32::from_str_radix(x_string.as_str(), radix)
-                .desc("Can't parse component in integer format")))
+    let image_filename = try!(u32::from_str_radix(stem_part.as_str(), radix)
+                                  .desc("Can't parse component in integer format"));
+    let (col, row) = match flag_scheme {
+        Scheme::Ags => (image_filename, flip_y(zoom, image_dir)),
+        Scheme::Xyz => (image_dir, flip_y(zoom, image_filename)),
+        _ => (image_dir, image_filename),
+    };
+
+    let filtered_extension = get_extension(image_format);
+    if parts.len() == 2 && parts[1] == filtered_extension {
+        info!("Zoom: {}, Col: {}, Row {}", zoom, col, row);
+        insert_image_sqlite(entry_path, zoom, col, row, &connection)
+    } else if parts.len() == 3 && parts[1] == "grid" && parts[2] == "json" {
+        insert_grid_json(entry_path, zoom, col, row, &connection)
+    } else {
+        Err(MBTileError::new(format!("The filtered extention {} \
+is different than the path's extention {}",
+                                     filtered_extension,
+                                     parts[1])))
+    }
 }
 
-fn insert_grid_json(connection: &Connection, grid_path: &Path) -> Result<(), MBTileError> {
+fn insert_grid_json(grid_path: &Path,
+                    zoom: u32,
+                    column: u32,
+                    row: u32,
+                    connection: &Connection)
+                    -> Result<(), MBTileError> {
     let mut grid_file = try!(File::open(grid_path).desc(format!("Can't open {:?}", grid_path)));
-    let mut buffer = Vec::new();
-    try!(grid_file.read_to_end(&mut buffer)
+    let mut grid_content = String::new();
+    try!(grid_file.read_to_string(&mut grid_content)
                   .desc(format!("Can't read file {:?}", grid_path)));
-    // let re = regex!(r"[\w\s=+-\/]+\(({(.|\n)*})\);?");
-    // for capture in re.captures(buffer) {
-    // buffer = capture;
-    // }
+    let re = try!(Regex::new(r"[\w\s=+-/]+\((\{(.|\n)*\})\);?"));
+    grid_content = if let Some(capture) = re.captures(grid_content.as_str()) {
+        try!(capture.at(1).ok_or_else(|| MBTileError::new_static("Can't parse grid"))).to_owned()
+    } else {
+        grid_content.clone()
+    };
+    let utfgrid = try!(Json::from_str(grid_content.as_str()));
+    let (data_opt, utfgrid_obj) = if let Json::Object(mut utfgrid_obj) = utfgrid {
+        (utfgrid_obj.remove("data"), utfgrid_obj)
+    } else {
+        return Err(MBTileError::new_static("grid json not an object"));
+    };
+    let kk = Json::Object(utfgrid_obj);
+    let filtered_json_grid = try!(json::encode(&kk));
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::Default);
+    try!(encoder.write_all(filtered_json_grid.as_bytes()));
+    let zipped_json = try!(encoder.finish());
+    try!(connection.execute("insert into grids (zoom_level, tile_column, tile_row, grid) values ($1, $2, $3, $4);",
+                            &[&(zoom as i64), &(column as i64), &(row as i64), &zipped_json])
+               .desc("Can't insert zipped grid in database"));
+    let utfgrid_obj = try!(kk.as_object()
+                             .ok_or_else(|| MBTileError::new_static("grid is not an object")));
+    let aa = &utfgrid_obj.get("keys");
+    if let Some(&Json::Array(ref keys_array)) = *aa {
+        let filtered_keys = try!(keys_array.iter().map(|k| {
+                                k.as_string()
+                                 .ok_or_else(|| MBTileError::new_static("key is not a string"))
+                            }))
+                                .filter(|&k| k != "");
+        for key in filtered_keys {
+            if let Some(ref data) = data_opt {
+                if let Json::Object(ref data_obj) = *data {
+                    let key_json = &data_obj[key];
+                    try!(connection.execute("insert into grid_data (zoom_level, tile_column, tile_row, key_name, key_json) values ($1, $2, $3, $4, $5);",
+                    &[&(zoom as i64), &(column as i64), &(row as i64), &key, &key_json.to_string()]));
+                } else {
+                    println!("Can't get some data_obj {:?}", data);
+                }
+            } else {
+                println!("Can't get some data {:?}", data_opt);
+            }
+        }
+    } else {
+        println!("Can't get some json array {:?}", aa);
+    }
     Ok(())
 }
 
@@ -457,7 +505,7 @@ fn export_grid(connection: &Connection,
         let grid_json = try!(json::encode(&grid_object));
         let dump = match flag_grid_callback.as_str() {
             "" | "false" | "null" => grid_json,
-            callback => format!("{}({})", callback, grid_json),
+            callback => format!("{}({});", callback, grid_json),
         };
         try!(grid_file.write_all(dump.as_bytes()));
     }
