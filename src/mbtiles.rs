@@ -451,12 +451,12 @@ fn export_tile(tile: &Row,
     Ok(())
 }
 
-fn get_count(connection: &Connection, table: &str) -> Result<i32, MBTileError> {
-    connection.query_row_safe("select count(zoom_level) from (?);",
-                              &[&table],
-                              |row| row.get::<i32>(0))
-              .desc(format!("Can't get {} zoom level", table))
-}
+// fn get_count(connection: &Connection, table: &str) -> Result<i32, MBTileError> {
+//     connection.query_row_safe("select count(zoom_level) from (?);",
+//                               &[&table],
+//                               |row| row.get::<i32>(0))
+//               .desc(format!("Can't get {} zoom level", table))
+// }
 
 fn export_grid(connection: &Connection,
                output_path: &Path,
