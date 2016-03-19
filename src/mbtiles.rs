@@ -305,11 +305,16 @@ fn insert_grid_json(grid_path: &Path,
                              .ok_or_else(|| MBTileError::new_static("grid is not an object")));
     let aa = &utfgrid_obj.get("keys");
     if let Some(&Json::Array(ref keys_array)) = *aa {
-        let filtered_keys = try!(keys_array.iter().map(|k| {
-                                k.as_string()
-                                 .ok_or_else(|| MBTileError::new_static("key is not a string"))
-                            }))
-                                .filter(|&k| k != "");
+        let filtered_keys = keys_array.iter().filter_map(|k| {
+            k.as_string().and_then(|k| {
+                if k == "" {
+                    None
+                } else {
+                    Some(k)
+                }
+            })
+        });
+        // let filtered_keys = try!(gg.and_then(|keys_res| keys_res.filter(|&k| k != "")));
         for key in filtered_keys {
             if let Some(ref data) = data_opt {
                 if let Json::Object(ref data_obj) = *data {
