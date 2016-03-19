@@ -1,5 +1,7 @@
 # MBUtiles
 
+[![Build Status](https://travis-ci.org/amarant/mbutiles.svg?branch=master)](https://travis-ci.org/amarant/mbutiles)
+
 MBUtiles is an utility in Rust, to generate MBTiles from tiles directories and extract tiles from MBTiles file.
 
 
