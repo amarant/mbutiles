@@ -94,7 +94,8 @@ fn main() {
                 },
         Command::Metadata =>
             // dumps metadata
-            metadata(args.arg_input, args.arg_output,
-                args.flag_scheme, args.flag_image_format, args.flag_grid_callback),
+            if let Err(err) = metadata(args.arg_input, args.arg_output) {
+                error!("{:?}", err);
+            },
     }
 }

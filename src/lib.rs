@@ -17,4 +17,4 @@ extern crate flate2;
 mod mbtile_error;
 mod mbtiles;
 
-pub use mbtiles::{ImageFormat, Scheme, export, import};
+pub use mbtiles::{ImageFormat, Scheme, export, import, metadata};

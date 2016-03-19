@@ -352,6 +352,25 @@ fn insert_image_sqlite(image_path: &Path,
     Ok(())
 }
 
+fn export_metadata(connection: &Connection,
+output_path: &Path)
+    -> Result<(), MBTileError> {
+    let mut metadata_statement = try!(connection.prepare("select name, value from metadata;"));
+
+    let metadata_statement_rows = try!(metadata_statement.query_map(&[], |row| {
+        (row.get::<String>(0), Json::String(row.get::<String>(1)))
+    }));
+    let metadata_map: BTreeMap<_, _> = try!(metadata_statement_rows.collect());
+
+    let json_obj = Json::Object(metadata_map);
+    let json_str = json_obj.to_string();
+    let metadata_path = output_path.join("metadata.json");
+    let mut metadata_file = try!(File::create(metadata_path).desc("Can't create metadata file"));
+    try!(metadata_file.write(json_str.as_bytes())
+                      .desc("Can't write metadata file"));
+    Ok(())
+}
+
 pub fn export<P: AsRef<Path>>(input: P,
                               opt_output: Option<P>,
                               flag_scheme: Scheme,
@@ -378,19 +397,7 @@ pub fn export<P: AsRef<Path>>(input: P,
     }
     try!(fs::create_dir_all(&output_path).desc("Can't create the output directory"));
     let connection = try!(mbtiles_connect(&input_path));
-    let mut metadata_statement = try!(connection.prepare("select name, value from metadata;"));
-
-    let metadata_statement_rows = try!(metadata_statement.query_map(&[], |row| {
-        (row.get::<String>(0), Json::String(row.get::<String>(1)))
-    }));
-    let metadata_map: BTreeMap<_, _> = try!(metadata_statement_rows.collect());
-
-    let json_obj = Json::Object(metadata_map);
-    let json_str = json_obj.to_string();
-    let metadata_path = output_path.join("metadata.json");
-    let mut metadata_file = try!(File::create(metadata_path).desc("Can't create metadata file"));
-    try!(metadata_file.write(json_str.as_bytes())
-                      .desc("Can't write metadata file"));
+    try!(export_metadata(&connection, &output_path));
     // TODO show pregression:
     // let zoom_level_count = get_count(&connection, "tiles");
 
@@ -517,14 +524,22 @@ fn export_grid(connection: &Connection,
     Ok(())
 }
 
-pub fn metadata(input: String,
-                output: Option<String>,
-                flag_scheme: Scheme,
-                flag_image_format: ImageFormat,
-                flag_grid_callback: String) {
-    let input_path = Path::new(&input);
-    if input_path.is_file() {
-    } else {
-        error!("Can only dumps from a file")
+pub fn metadata<P: AsRef<Path>>(input: P,
+                opt_output: Option<P>) -> Result<(), MBTileError> {
+    let input_path: PathBuf = input.as_ref().to_path_buf();
+    if !input_path.is_file() {
+        error!("Can only export from a file")
     }
+    let output: PathBuf = try!(opt_output
+        .map(|p| p.as_ref().to_path_buf())
+        .or_else(|| {
+           input_path.file_stem()
+                     .and_then(|stem| Some(PathBuf::from(stem)))
+                     //.map(|stem_str| stem_str.to_owned())
+       })
+       .ok_or(MBTileError::new_static("Cannot identify an output directory")));
+    let output_path = output.join("metadata.json");
+    let connection = try!(mbtiles_connect(&input_path));
+    try!(export_metadata(&connection, &output_path));
+    Ok(())
 }
