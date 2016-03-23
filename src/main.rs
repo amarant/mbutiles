@@ -7,6 +7,8 @@ extern crate regex;
 extern crate log;
 extern crate stdio_logger;
 extern crate flate2;
+#[macro_use]
+extern crate quick_error;
 
 use docopt::Docopt;
 use std::path::Path;
