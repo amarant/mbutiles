@@ -379,7 +379,7 @@ pub fn export<P: AsRef<Path>>(input: P,
                               -> Result<(), MBTileError> {
     let input_path: PathBuf = input.as_ref().to_path_buf();
     if !input_path.is_file() {
-        error!("Can only export from a file")
+        return Err(MBTileError::new(format!("Can't export from a file at path {:?}", input_path)));
     }
     let output: PathBuf = try!(opt_output
         .map(|p| p.as_ref().to_path_buf())
