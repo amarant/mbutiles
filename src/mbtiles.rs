@@ -188,8 +188,8 @@ fn walk_dir_image(input: &Path,
                                                   flag_image_format,
                                                   zoom,
                                                   image_dir,
-                                                  &entry_path,
-                                                  &connection)
+                                                  entry_path,
+                                                  connection)
                     })
                 })
                 .unwrap_or_else(|err| error!("{}", err))
@@ -260,9 +260,9 @@ fn parse_filename_and_insert(component: Component,
     let filtered_extension = get_extension(image_format);
     if parts.len() == 2 && parts[1] == filtered_extension {
         info!("Zoom: {}, Col: {}, Row {}", zoom, col, row);
-        insert_image_sqlite(entry_path, zoom, col, row, &connection)
+        insert_image_sqlite(entry_path, zoom, col, row, connection)
     } else if parts.len() == 3 && parts[1] == "grid" && parts[2] == "json" {
-        insert_grid_json(entry_path, zoom, col, row, &connection)
+        insert_grid_json(entry_path, zoom, col, row, connection)
     } else {
         Err(MBTileError::new(format!("The filtered extention {} \
 is different than the path's extention {}",
