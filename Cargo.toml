@@ -12,7 +12,7 @@ license = "BSD-3-Clause"
 [dependencies]
 docopt = "0.6"
 rustc-serialize = "0.3"
-rusqlite = "0.6.0"
+rusqlite = "0.7"
 walkdir = "0.1"
 regex = "0.1"
 stdio_logger = "0.1.1"

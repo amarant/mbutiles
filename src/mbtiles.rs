@@ -358,7 +358,7 @@ output_path: &Path)
     let mut metadata_statement = try!(connection.prepare("select name, value from metadata;"));
 
     let metadata_statement_rows = try!(metadata_statement.query_map(&[], |row| {
-        (row.get::<String>(0), Json::String(row.get::<String>(1)))
+        (row.get::<i32, String>(0), Json::String(row.get::<i32, String>(1)))
     }));
     let metadata_map: BTreeMap<_, _> = try!(metadata_statement_rows.collect());
 
@@ -403,8 +403,8 @@ pub fn export<P: AsRef<Path>>(input: P,
 
     let mut tiles_statement =
         try!(connection.prepare("select zoom_level, tile_column, tile_row, tile_data from tiles;"));
-    let tiles_rows = try!(tiles_statement.query(&[]));
-    for tile_res in tiles_rows {
+    let mut tiles_rows = try!(tiles_statement.query(&[]));
+    while let Some(tile_res) = tiles_rows.next() {
         let tile = try!(tile_res);
         try!(export_tile(&tile, output_path, flag_scheme, flag_image_format));
     }
@@ -417,9 +417,9 @@ fn export_tile(tile: &Row,
                flag_scheme: Scheme,
                flag_image_format: ImageFormat)
                -> Result<(), MBTileError> {
-    let (z, x, mut y): (u32, u32, u32) = (tile.get::<i32>(0) as u32,
-                                          tile.get::<i32>(1) as u32,
-                                          tile.get::<i32>(2) as u32);
+    let (z, x, mut y): (u32, u32, u32) = (tile.get::<i32, i32>(0) as u32,
+                                          tile.get::<i32, i32>(1) as u32,
+                                          tile.get::<i32, i32>(2) as u32);
     let tile_dir = match flag_scheme {
         Scheme::Xyz => {
             y = flip_y(z, y as u32);
@@ -447,14 +447,14 @@ fn export_tile(tile: &Row,
         _ => tile_dir.join(format!("{}.{}", y, get_extension(flag_image_format))),
     };
     let mut tile_file = try!(File::create(tile_path));
-    try!(tile_file.write_all(&tile.get::<Vec<u8>>(3)));
+    try!(tile_file.write_all(&tile.get::<i32, Vec<u8>>(3)));
     Ok(())
 }
 
 // fn get_count(connection: &Connection, table: &str) -> Result<i32, MBTileError> {
 //     connection.query_row_safe("select count(zoom_level) from (?);",
 //                               &[&table],
-//                               |row| row.get::<i32>(0))
+//                               |row| row.get::<i32, i32>(0))
 //               .desc(format!("Can't get {} zoom level", table))
 // }
 
@@ -467,8 +467,8 @@ fn export_grid(connection: &Connection,
     // let grids_zoom_level_count = get_count(&connection, "grids");
     let mut grids_statement =
         try!(connection.prepare("select zoom_level, tile_column, tile_row, grid from grids;"));
-    let grids_rows = try!(grids_statement.query(&[]));
-    for grid_row in grids_rows {
+    let mut grids_rows = try!(grids_statement.query(&[]));
+    while let Some(grid_row) = grids_rows.next() {
         let grid = try!(grid_row);
         let (zoom_level, tile_column, mut y): (i32, i32, i32) = (grid.get(0),
                                                                  grid.get(1),
@@ -479,7 +479,7 @@ fn export_grid(connection: &Connection,
         let grid_dir = output_path.join(zoom_level.to_string()).join(tile_column.to_string());
         try!(fs::create_dir_all(&grid_dir)
                  .desc(format!("Can't create the directory: {:?}", grid_dir)));
-        let grid_zip = grid.get::<Vec<u8>>(3);
+        let grid_zip = grid.get::<i32, Vec<u8>>(3);
         let grid_cursor = Cursor::new(grid_zip);
         let mut decoder = ZlibDecoder::new(grid_cursor);
         let mut unzipped_grid = String::new();
@@ -495,9 +495,9 @@ fn export_grid(connection: &Connection,
 
         let grid_data_rows = try!(grid_data_statement.query_map(&[&zoom_level, &tile_column, &y],
                                                                 |row| {
-                                                                    let json = row.get::<String>(1);
+                                                                    let json = row.get::<i32, String>(1);
                                                                     Json::from_str(json.as_str())
-                    .map(|res| (row.get::<String>(0), res))
+                    .map(|res| (row.get::<i32, String>(0), res))
                     .desc(format!("Can't parse json: {}", json))
                                                                 }));
         let data: BTreeMap<_, _> = try!(grid_data_rows.map(|res| {
