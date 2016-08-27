@@ -1,3 +1,5 @@
+#![feature(question_mark)]
+
 extern crate rustc_serialize;
 extern crate rusqlite;
 extern crate walkdir;

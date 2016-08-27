@@ -1,3 +1,5 @@
+#![feature(question_mark)]
+
 extern crate rustc_serialize;
 extern crate docopt;
 extern crate rusqlite;
