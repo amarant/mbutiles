@@ -387,7 +387,7 @@ pub fn export<P: AsRef<Path>>(input: P,
                      .and_then(|stem| Some(PathBuf::from(stem)))
                      //.map(|stem_str| stem_str.to_owned())
        })
-       .ok_or(MBTileError::new_static("Cannot identify an output directory"))?;
+       .ok_or_else(|| MBTileError::new_static("Cannot identify an output directory"))?;
     debug!("Exporting MBTiles to disk");
     debug!("{:?} --> {:?}", &input_path, &output);
     let output_path = Path::new(&output);
@@ -396,7 +396,7 @@ pub fn export<P: AsRef<Path>>(input: P,
     }
     fs::create_dir_all(&output_path).desc("Can't create the output directory")?;
     let connection = mbtiles_connect(&input_path)?;
-    export_metadata(&connection, &output_path)?;
+    export_metadata(&connection, output_path)?;
     // TODO show pregression:
     // let zoom_level_count = get_count(&connection, "tiles");
 
@@ -407,7 +407,7 @@ pub fn export<P: AsRef<Path>>(input: P,
         let tile = tile_res?;
         export_tile(&tile, output_path, flag_scheme, flag_image_format)?;
     }
-    export_grid(&connection, &output_path, flag_scheme, flag_grid_callback)?;
+    export_grid(&connection, output_path, flag_scheme, flag_grid_callback)?;
     Ok(())
 }
 
@@ -536,7 +536,7 @@ pub fn metadata<P: AsRef<Path>>(input: P,
                      .and_then(|stem| Some(PathBuf::from(stem)))
                      //.map(|stem_str| stem_str.to_owned())
        })
-       .ok_or(MBTileError::new_static("Cannot identify an output directory"))?;
+       .ok_or_else(|| MBTileError::new_static("Cannot identify an output directory"))?;
     let output_path = output.join("metadata.json");
     let connection = mbtiles_connect(&input_path)?;
     export_metadata(&connection, &output_path)?;
