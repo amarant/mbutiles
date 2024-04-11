@@ -511,8 +511,18 @@ fn export_grid(
     flag_scheme: Scheme,
     flag_grid_callback: String,
 ) -> Result<(), MBTileError> {
-    // TODO show pregression:
+    // TODO show progression:
     // let grids_zoom_level_count = get_count(&connection, "grids");
+
+    let mut has_grids_table_statement = connection.prepare(
+        "SELECT count(*) FROM sqlite_master WHERE (type='table' OR type='view') AND name='grids';",
+    )?;
+    let has_grids_table = has_grids_table_statement
+        .query_row([], |row| row.get::<usize, i32>(0))
+        .desc("Can't check if the table grids exists")?;
+    if has_grids_table == 0 {
+        return Ok(());
+    }
     let mut grids_statement =
         connection.prepare("select zoom_level, tile_column, tile_row, grid from grids;")?;
     let mut grids_rows = grids_statement.query(())?;
